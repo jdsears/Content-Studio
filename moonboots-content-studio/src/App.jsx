@@ -801,14 +801,21 @@ const CalendarView = ({ posts }) => {
   );
 };
 
-// Graphics Image Maker - Templates and Platform Support
-const GraphicsImageMaker = () => {
-  const [content, setContent] = useState('');
-  const [secondaryContent, setSecondaryContent] = useState('');
-  const [carouselTitle, setCarouselTitle] = useState('');
-  const [style, setStyle] = useState('dark');
-  const [template, setTemplate] = useState('quote');
-  const [platform, setPlatform] = useState('instagram');
+// Graphics Image Maker - Templates and Platform Support (state lifted to parent for persistence)
+const GraphicsImageMaker = ({
+  content,
+  setContent,
+  secondaryContent,
+  setSecondaryContent,
+  carouselTitle,
+  setCarouselTitle,
+  style,
+  setStyle,
+  template,
+  setTemplate,
+  platform,
+  setPlatform,
+}) => {
   const [downloading, setDownloading] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
 
@@ -1584,6 +1591,14 @@ export default function ContentStudio() {
   const [useOptimalTiming, setUseOptimalTiming] = useState(true);
   const [instagramTemplate, setInstagramTemplate] = useState('quote');
 
+  // Lifted state from GraphicsImageMaker - persists across tab switches
+  const [graphicsContent, setGraphicsContent] = useState('');
+  const [graphicsSecondaryContent, setGraphicsSecondaryContent] = useState('');
+  const [graphicsCarouselTitle, setGraphicsCarouselTitle] = useState('');
+  const [graphicsStyle, setGraphicsStyle] = useState('dark');
+  const [graphicsTemplate, setGraphicsTemplate] = useState('quote');
+  const [graphicsPlatform, setGraphicsPlatform] = useState('instagram');
+
   // Demo posts for when backend is not available
   const demoPosts = [
     { id: 'demo-1', content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00' },
@@ -1858,7 +1873,22 @@ export default function ContentStudio() {
             )}
             {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={handleReject} onLogPerformance={handleMarkPublished} />}
             {activeTab === 'calendar' && <CalendarView posts={posts} />}
-            {activeTab === 'graphics' && <GraphicsImageMaker />}
+            {activeTab === 'graphics' && (
+              <GraphicsImageMaker
+                content={graphicsContent}
+                setContent={setGraphicsContent}
+                secondaryContent={graphicsSecondaryContent}
+                setSecondaryContent={setGraphicsSecondaryContent}
+                carouselTitle={graphicsCarouselTitle}
+                setCarouselTitle={setGraphicsCarouselTitle}
+                style={graphicsStyle}
+                setStyle={setGraphicsStyle}
+                template={graphicsTemplate}
+                setTemplate={setGraphicsTemplate}
+                platform={graphicsPlatform}
+                setPlatform={setGraphicsPlatform}
+              />
+            )}
             {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
             {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} saving={saving} />}
           </div>
