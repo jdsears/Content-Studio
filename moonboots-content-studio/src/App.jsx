@@ -612,8 +612,113 @@ const CalendarView = ({ posts }) => {
 const QuoteCardMaker = () => {
   const [quote, setQuote] = useState('');
   const [style, setStyle] = useState('dark');
-  const styles = { dark: { bg: 'bg-slate-900', text: 'text-white', accent: 'text-slate-400' }, light: { bg: 'bg-white', text: 'text-slate-900', accent: 'text-slate-500' }, gradient: { bg: 'bg-gradient-to-br from-slate-900 to-blue-900', text: 'text-white', accent: 'text-slate-300' } };
-  const s = styles[style];
+  const [downloading, setDownloading] = useState(false);
+
+  const styleConfigs = {
+    dark: { bg: '#0f172a', text: '#ffffff', accent: '#94a3b8', gradient: null },
+    light: { bg: '#ffffff', text: '#0f172a', accent: '#64748b', gradient: null },
+    gradient: { bg: '#0f172a', text: '#ffffff', accent: '#cbd5e1', gradient: ['#0f172a', '#1e3a5f'] },
+  };
+
+  const tailwindStyles = {
+    dark: { bg: 'bg-slate-900', text: 'text-white', accent: 'text-slate-400' },
+    light: { bg: 'bg-white', text: 'text-slate-900', accent: 'text-slate-500' },
+    gradient: { bg: 'bg-gradient-to-br from-slate-900 to-blue-900', text: 'text-white', accent: 'text-slate-300' },
+  };
+
+  const s = tailwindStyles[style];
+  const config = styleConfigs[style];
+
+  const handleDownload = async () => {
+    if (!quote) return;
+    setDownloading(true);
+
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const size = 1080; // Instagram square size
+      canvas.width = size;
+      canvas.height = size;
+
+      // Background
+      if (config.gradient) {
+        const gradient = ctx.createLinearGradient(0, 0, size, size);
+        gradient.addColorStop(0, config.gradient[0]);
+        gradient.addColorStop(1, config.gradient[1]);
+        ctx.fillStyle = gradient;
+      } else {
+        ctx.fillStyle = config.bg;
+      }
+      ctx.fillRect(0, 0, size, size);
+
+      // Logo area - draw moonboots text with moon icon
+      const logoY = 80;
+      ctx.fillStyle = config.text;
+      ctx.font = '600 28px system-ui, -apple-system, sans-serif';
+
+      // Draw crescent moon icon
+      const moonX = 60;
+      const moonY = logoY;
+      const moonRadius = 14;
+      ctx.beginPath();
+      ctx.arc(moonX, moonY, moonRadius, 0, Math.PI * 2);
+      ctx.fill();
+      // Cut out crescent
+      ctx.fillStyle = config.bg;
+      ctx.beginPath();
+      ctx.arc(moonX + 8, moonY - 2, moonRadius - 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Logo text
+      ctx.fillStyle = config.text;
+      ctx.fillText('moonboots', moonX + 28, logoY + 8);
+
+      // Quote text - word wrap
+      ctx.font = '300 42px system-ui, -apple-system, sans-serif';
+      const maxWidth = size - 120;
+      const lineHeight = 56;
+      const words = quote.split(' ');
+      let line = '';
+      let y = size / 2 - 60;
+      const lines = [];
+
+      for (let word of words) {
+        const testLine = line + word + ' ';
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxWidth && line !== '') {
+          lines.push(line.trim());
+          line = word + ' ';
+        } else {
+          line = testLine;
+        }
+      }
+      lines.push(line.trim());
+
+      // Center vertically
+      const totalHeight = lines.length * lineHeight;
+      y = (size - totalHeight) / 2;
+
+      for (let textLine of lines) {
+        ctx.fillText(textLine, 60, y);
+        y += lineHeight;
+      }
+
+      // Footer
+      ctx.fillStyle = config.accent;
+      ctx.font = '400 24px system-ui, -apple-system, sans-serif';
+      ctx.fillText('moonbootsconsultancy.net', 60, size - 60);
+
+      // Download
+      const link = document.createElement('a');
+      link.download = `moonboots-quote-${Date.now()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('Download error:', err);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -624,24 +729,35 @@ const QuoteCardMaker = () => {
       <div>
         <label className="block text-sm text-slate-400 mb-2">Style</label>
         <div className="flex gap-2">
-          {Object.keys(styles).map(st => <button key={st} onClick={() => setStyle(st)} className={`px-4 py-2 text-sm rounded-lg border capitalize ${style === st ? 'bg-white text-slate-900' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}>{st}</button>)}
+          {Object.keys(tailwindStyles).map(st => <button key={st} onClick={() => setStyle(st)} className={`px-4 py-2 text-sm rounded-lg border capitalize ${style === st ? 'bg-white text-slate-900' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}>{st}</button>)}
         </div>
       </div>
       <div>
         <label className="block text-sm text-slate-400 mb-2">Preview</label>
         <div className={`aspect-square max-w-md mx-auto ${s.bg} rounded-xl p-8 flex flex-col justify-between`}>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 relative">
-              <div className={`absolute inset-0 rounded-full ${style === 'light' ? 'bg-slate-900' : 'bg-white'}`} />
-              <div className={`absolute rounded-full ${style === 'light' ? 'bg-white' : 'bg-slate-900'}`} style={{ width: '70%', height: '70%', top: '15%', left: '35%' }} />
-            </div>
-            <span className={`text-sm font-medium ${s.text}`}>moonboots</span>
+            <svg width="24" height="24" viewBox="0 0 24 24" className={style === 'light' ? 'text-slate-900' : 'text-white'}>
+              <circle cx="12" cy="12" r="10" fill="currentColor"/>
+              <circle cx="16" cy="10" r="8" fill={style === 'light' ? '#ffffff' : '#0f172a'}/>
+            </svg>
+            <span className={`text-sm font-semibold tracking-tight ${s.text}`}>moonboots</span>
           </div>
           <p className={`text-xl font-light leading-relaxed ${s.text}`}>{quote || "Your quote here..."}</p>
           <div className={`text-sm ${s.accent}`}>moonbootsconsultancy.net</div>
         </div>
       </div>
-      <button disabled={!quote} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">↓ Download Image</button>
+      <button
+        onClick={handleDownload}
+        disabled={!quote || downloading}
+        className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg disabled:opacity-50 hover:bg-slate-100 flex items-center justify-center gap-2"
+      >
+        {downloading ? (
+          <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Generating...</>
+        ) : (
+          <>↓ Download Image</>
+        )}
+      </button>
+      <p className="text-xs text-slate-500 text-center">Downloads as 1080x1080 PNG (Instagram-ready)</p>
     </div>
   );
 };
