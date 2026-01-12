@@ -72,14 +72,35 @@ const TabButton = ({ active, onClick, children, count }) => (
   </button>
 );
 
-// Content Generator with optimal timing
-const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
-  const [topic, setTopic] = useState('');
-  const [selectedPillar, setSelectedPillar] = useState('ai');
-  const [platforms, setPlatforms] = useState({ linkedin: true, x: true, instagram: false });
+// Instagram image templates
+const instagramTemplates = [
+  { id: 'quote', name: 'Quote Card', description: 'Bold text on gradient background', icon: '💬' },
+  { id: 'tips', name: 'Tips Carousel', description: 'Numbered tips with icons', icon: '📝' },
+  { id: 'stat', name: 'Stat Highlight', description: 'Big number with context', icon: '📊' },
+  { id: 'before-after', name: 'Before/After', description: 'Comparison split view', icon: '↔️' },
+  { id: 'question', name: 'Question Hook', description: 'Engaging question overlay', icon: '❓' },
+];
+
+// Content Generator with optimal timing - state lifted from parent
+const ContentGenerator = ({
+  onGenerate,
+  insights,
+  claudeApiKey,
+  // Lifted state props
+  topic,
+  setTopic,
+  selectedPillar,
+  setSelectedPillar,
+  platforms,
+  setPlatforms,
+  generatedContent,
+  setGeneratedContent,
+  useOptimalTiming,
+  setUseOptimalTiming,
+  instagramTemplate,
+  setInstagramTemplate,
+}) => {
   const [generating, setGenerating] = useState(false);
-  const [generatedContent, setGeneratedContent] = useState(null);
-  const [useOptimalTiming, setUseOptimalTiming] = useState(true);
   const [error, setError] = useState(null);
 
   const handleGenerate = async () => {
@@ -96,6 +117,7 @@ const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
           pillar: pillarName,
           platforms,
           apiKey: claudeApiKey,
+          instagramTemplate: platforms.instagram ? instagramTemplate : null,
         });
         setGeneratedContent(result);
       } else {
@@ -109,7 +131,9 @@ const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
           mockContent.x = `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`;
         }
         if (platforms.instagram) {
-          mockContent.instagram = `${topic} ✨\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`;
+          const template = instagramTemplates.find(t => t.id === instagramTemplate);
+          const templateHint = template ? `\n\n[Template: ${template.name} - ${template.description}]` : '';
+          mockContent.instagram = `${topic} ✨\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership${templateHint}`;
         }
         setGeneratedContent(mockContent);
       }
@@ -129,6 +153,7 @@ const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
         platform,
         pillar: pillars.find(p => p.id === selectedPillar)?.name,
         suggestedTime: optimalSlot ? `${optimalSlot.day} ${optimalSlot.hour}:00` : null,
+        imageTemplate: platform === 'instagram' ? instagramTemplate : null,
       });
       setGeneratedContent(prev => ({ ...prev, [platform]: null }));
     }
@@ -185,6 +210,33 @@ const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
         </div>
       </div>
 
+      {/* Instagram Image Template Selection */}
+      {platforms.instagram && (
+        <div className="p-4 bg-pink-900/20 rounded-xl border border-pink-800/30">
+          <label className="block text-sm text-pink-300 mb-3">📸 Instagram Image Template</label>
+          <div className="grid grid-cols-2 gap-2">
+            {instagramTemplates.map(template => (
+              <button
+                key={template.id}
+                onClick={() => setInstagramTemplate(template.id)}
+                className={`p-3 rounded-lg border text-left transition-all ${
+                  instagramTemplate === template.id
+                    ? 'bg-pink-500/20 border-pink-500/50 text-white'
+                    : 'bg-slate-800/50 border-slate-700/50 text-slate-300 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span>{template.icon}</span>
+                  <span className="text-sm font-medium">{template.name}</span>
+                </div>
+                <p className="text-xs text-slate-400">{template.description}</p>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500 mt-3">Template will be applied when creating the image in the Graphics tab</p>
+        </div>
+      )}
+
       {!claudeApiKey && (
         <div className="p-3 bg-yellow-900/20 rounded-lg border border-yellow-800/30 text-xs text-yellow-400">
           No Claude API key configured. Using demo content. Add your key in Settings for AI-generated content.
@@ -211,12 +263,22 @@ const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
                   <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
                   <span className="text-sm text-slate-300">{platform === 'x' ? 'X (Manual)' : platform}</span>
                   {useOptimalTiming && insights?.optimal?.[platform] && <span className="text-xs text-blue-400">→ {insights.optimal[platform].day} {insights.optimal[platform].hour}:00</span>}
+                  {platform === 'instagram' && instagramTemplate && (
+                    <span className="text-xs text-pink-400">📸 {instagramTemplates.find(t => t.id === instagramTemplate)?.name}</span>
+                  )}
                 </div>
                 <button onClick={() => handleAddToQueue(platform)} className="px-3 py-1 text-xs bg-white text-slate-900 rounded hover:bg-slate-100">Add to Queue</button>
               </div>
               <p className="text-sm text-slate-300 whitespace-pre-wrap">{content}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Generation History - shows previous prompt if content was cleared */}
+      {!generatedContent && topic && (
+        <div className="p-3 bg-slate-800/30 rounded-lg border border-slate-700/30 text-xs text-slate-500">
+          Last topic: "{topic.substring(0, 100)}{topic.length > 100 ? '...' : ''}"
         </div>
       )}
     </div>
@@ -778,6 +840,14 @@ export default function ContentStudio() {
   const [performanceLogPost, setPerformanceLogPost] = useState(null);
   const [backendAvailable, setBackendAvailable] = useState(false);
 
+  // Lifted state from ContentGenerator - persists across tab switches
+  const [generatorTopic, setGeneratorTopic] = useState('');
+  const [generatorPillar, setGeneratorPillar] = useState('ai');
+  const [generatorPlatforms, setGeneratorPlatforms] = useState({ linkedin: true, x: true, instagram: false });
+  const [generatedContent, setGeneratedContent] = useState(null);
+  const [useOptimalTiming, setUseOptimalTiming] = useState(true);
+  const [instagramTemplate, setInstagramTemplate] = useState('quote');
+
   // Demo posts for when backend is not available
   const demoPosts = [
     { id: 'demo-1', content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00' },
@@ -1012,7 +1082,25 @@ export default function ContentStudio() {
           </div>
         ) : (
           <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
-            {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} claudeApiKey={settings.claudeApiKey} />}
+            {activeTab === 'generate' && (
+              <ContentGenerator
+                onGenerate={handleGenerate}
+                insights={insights}
+                claudeApiKey={settings.claudeApiKey}
+                topic={generatorTopic}
+                setTopic={setGeneratorTopic}
+                selectedPillar={generatorPillar}
+                setSelectedPillar={setGeneratorPillar}
+                platforms={generatorPlatforms}
+                setPlatforms={setGeneratorPlatforms}
+                generatedContent={generatedContent}
+                setGeneratedContent={setGeneratedContent}
+                useOptimalTiming={useOptimalTiming}
+                setUseOptimalTiming={setUseOptimalTiming}
+                instagramTemplate={instagramTemplate}
+                setInstagramTemplate={setInstagramTemplate}
+              />
+            )}
             {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={handleReject} onLogPerformance={handleMarkPublished} />}
             {activeTab === 'calendar' && <CalendarView posts={posts} />}
             {activeTab === 'graphics' && <QuoteCardMaker />}
