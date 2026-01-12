@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { api, checkBackendAvailable } from './lib/api';
+import { generateContent as claudeGenerateContent } from './lib/claude';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -71,23 +73,52 @@ const TabButton = ({ active, onClick, children, count }) => (
 );
 
 // Content Generator with optimal timing
-const ContentGenerator = ({ onGenerate, insights }) => {
+const ContentGenerator = ({ onGenerate, insights, claudeApiKey }) => {
   const [topic, setTopic] = useState('');
   const [selectedPillar, setSelectedPillar] = useState('ai');
   const [platforms, setPlatforms] = useState({ linkedin: true, x: true, instagram: false });
   const [generating, setGenerating] = useState(false);
   const [generatedContent, setGeneratedContent] = useState(null);
   const [useOptimalTiming, setUseOptimalTiming] = useState(true);
+  const [error, setError] = useState(null);
 
   const handleGenerate = async () => {
     setGenerating(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setGeneratedContent({
-      linkedin: `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`,
-      x: `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`,
-      instagram: `${topic} ✨\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`,
-    });
-    setGenerating(false);
+    setError(null);
+
+    const pillarName = pillars.find(p => p.id === selectedPillar)?.name || 'AI Strategy';
+
+    try {
+      // Use real Claude API if key is configured
+      if (claudeApiKey) {
+        const result = await claudeGenerateContent({
+          topic,
+          pillar: pillarName,
+          platforms,
+          apiKey: claudeApiKey,
+        });
+        setGeneratedContent(result);
+      } else {
+        // Fallback to mock content if no API key
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const mockContent = {};
+        if (platforms.linkedin) {
+          mockContent.linkedin = `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`;
+        }
+        if (platforms.x) {
+          mockContent.x = `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`;
+        }
+        if (platforms.instagram) {
+          mockContent.instagram = `${topic} ✨\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`;
+        }
+        setGeneratedContent(mockContent);
+      }
+    } catch (err) {
+      console.error('Generation error:', err);
+      setError(err.message || 'Failed to generate content');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const handleAddToQueue = (platform) => {
@@ -153,6 +184,18 @@ const ContentGenerator = ({ onGenerate, insights }) => {
           ))}
         </div>
       </div>
+
+      {!claudeApiKey && (
+        <div className="p-3 bg-yellow-900/20 rounded-lg border border-yellow-800/30 text-xs text-yellow-400">
+          No Claude API key configured. Using demo content. Add your key in Settings for AI-generated content.
+        </div>
+      )}
+
+      {error && (
+        <div className="p-3 bg-red-900/20 rounded-lg border border-red-800/30 text-xs text-red-400">
+          {error}
+        </div>
+      )}
 
       <button onClick={handleGenerate} disabled={!topic || generating} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
         {generating ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Generating...</> : <>✨ Generate Content</>}
@@ -396,31 +439,80 @@ const InsightsDashboard = ({ performance }) => {
 };
 
 // Approval Queue
-const ApprovalQueue = ({ posts, onApprove, onReject }) => {
+const ApprovalQueue = ({ posts, onApprove, onReject, onLogPerformance }) => {
   const pending = posts.filter(p => p.status === 'pending');
-  if (pending.length === 0) return <div className="text-center py-12"><div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 flex items-center justify-center text-2xl">✓</div><p className="text-slate-400">No posts awaiting approval</p></div>;
-  
+  const approved = posts.filter(p => p.status === 'approved');
+
   return (
-    <div className="space-y-4">
-      {pending.map(post => (
-        <div key={post.id} className="p-5 bg-slate-800/50 rounded-xl border border-slate-700/50">
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <PlatformIcon platform={post.platform} className="w-5 h-5 text-slate-400" />
-              <span className="text-xs px-2 py-1 bg-slate-700/50 rounded-full text-slate-300">{post.pillar}</span>
-              {post.platform === 'x' && <span className="text-xs px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded-full">Manual</span>}
-            </div>
-            <StatusBadge status={post.status} />
+    <div className="space-y-8">
+      {/* Pending Posts */}
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Pending Approval ({pending.length})</h3>
+        {pending.length === 0 ? (
+          <div className="text-center py-8 bg-slate-800/30 rounded-xl border border-slate-800">
+            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-slate-800 flex items-center justify-center text-xl">✓</div>
+            <p className="text-slate-500 text-sm">No posts awaiting approval</p>
           </div>
-          <p className="text-slate-200 text-sm whitespace-pre-wrap mb-4">{post.content}</p>
-          {post.suggestedTime && <p className="text-xs text-blue-400 mb-4">🎯 Optimal time: {post.suggestedTime}</p>}
-          <div className="flex items-center gap-2">
-            <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">✓ Approve</button>
-            <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">✎ Edit</button>
-            <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">✕ Reject</button>
+        ) : (
+          <div className="space-y-4">
+            {pending.map(post => (
+              <div key={post.id} className="p-5 bg-slate-800/50 rounded-xl border border-slate-700/50">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <PlatformIcon platform={post.platform} className="w-5 h-5 text-slate-400" />
+                    <span className="text-xs px-2 py-1 bg-slate-700/50 rounded-full text-slate-300">{post.pillar}</span>
+                    {post.platform === 'x' && <span className="text-xs px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded-full">Manual</span>}
+                  </div>
+                  <StatusBadge status={post.status} />
+                </div>
+                <p className="text-slate-200 text-sm whitespace-pre-wrap mb-4">{post.content}</p>
+                {post.suggestedTime && <p className="text-xs text-blue-400 mb-4">🎯 Optimal time: {post.suggestedTime}</p>}
+                <div className="flex items-center gap-2">
+                  <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">✓ Approve</button>
+                  <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">✎ Edit</button>
+                  <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">✕ Reject</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Approved Posts - Ready to Publish */}
+      {approved.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-slate-300 mb-4">Ready to Post ({approved.length})</h3>
+          <div className="space-y-4">
+            {approved.map(post => (
+              <div key={post.id} className="p-5 bg-slate-800/50 rounded-xl border border-green-900/30">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <PlatformIcon platform={post.platform} className="w-5 h-5 text-slate-400" />
+                    <span className="text-xs px-2 py-1 bg-slate-700/50 rounded-full text-slate-300">{post.pillar}</span>
+                    {post.scheduledFor && <span className="text-xs text-slate-500">Scheduled: {post.scheduledFor}</span>}
+                  </div>
+                  <StatusBadge status={post.status} />
+                </div>
+                <p className="text-slate-200 text-sm whitespace-pre-wrap mb-4">{post.content}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => navigator.clipboard.writeText(post.content)}
+                    className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700"
+                  >
+                    📋 Copy
+                  </button>
+                  <button
+                    onClick={() => onLogPerformance(post)}
+                    className="px-4 py-2 text-sm bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30"
+                  >
+                    📊 Log Performance
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-      ))}
+      )}
     </div>
   );
 };
@@ -493,60 +585,402 @@ const QuoteCardMaker = () => {
 };
 
 // Settings
-const SettingsPanel = () => (
-  <div className="space-y-6">
-    <div>
-      <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
-      <div className="space-y-3">
-        {[{ p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Buffer' }, { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Buffer' }, { p: 'x', label: 'X (Twitter)', sub: 'Manual posting only', manual: true }].map(({ p, label, sub, manual }) => (
-          <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
-              <div><p className="text-sm text-white">{label}</p><p className={`text-xs ${manual ? 'text-yellow-500' : 'text-slate-500'}`}>{sub}</p></div>
+const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
+  const [localSettings, setLocalSettings] = useState(settings);
+  const [showClaudeKey, setShowClaudeKey] = useState(false);
+  const [showBufferKey, setShowBufferKey] = useState(false);
+
+  useEffect(() => {
+    setLocalSettings(settings);
+  }, [settings]);
+
+  const handleSave = () => {
+    onSettingsChange(localSettings);
+  };
+
+  const hasChanges = JSON.stringify(localSettings) !== JSON.stringify(settings);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
+        <div className="space-y-3">
+          {[{ p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Buffer' }, { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Buffer' }, { p: 'x', label: 'X (Twitter)', sub: 'Manual posting only', manual: true }].map(({ p, label, sub, manual }) => (
+            <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+              <div className="flex items-center gap-3">
+                <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
+                <div><p className="text-sm text-white">{label}</p><p className={`text-xs ${manual ? 'text-yellow-500' : 'text-slate-500'}`}>{sub}</p></div>
+              </div>
+              {manual ? <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span> : <button className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Connect</button>}
             </div>
-            {manual ? <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span> : <button className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Connect</button>}
+          ))}
+        </div>
+      </div>
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Claude API Key</label>
+            <div className="relative">
+              <input
+                type={showClaudeKey ? 'text' : 'password'}
+                value={localSettings.claudeApiKey || ''}
+                onChange={(e) => setLocalSettings(prev => ({ ...prev, claudeApiKey: e.target.value }))}
+                placeholder="sk-ant-..."
+                className="w-full px-3 py-2 pr-16 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowClaudeKey(!showClaudeKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
+              >
+                {showClaudeKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 mt-1">Get your key at console.anthropic.com</p>
           </div>
-        ))}
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Buffer Access Token</label>
+            <div className="relative">
+              <input
+                type={showBufferKey ? 'text' : 'password'}
+                value={localSettings.bufferAccessToken || ''}
+                onChange={(e) => setLocalSettings(prev => ({ ...prev, bufferAccessToken: e.target.value }))}
+                placeholder="Enter your Buffer access token"
+                className="w-full px-3 py-2 pr-16 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowBufferKey(!showBufferKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
+              >
+                {showBufferKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 mt-1">Get your token at buffer.com/developers</p>
+          </div>
+        </div>
+      </div>
+      {hasChanges && (
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {saving ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Saving...</> : 'Save Settings'}
+        </button>
+      )}
+      {!hasChanges && localSettings.claudeApiKey && (
+        <div className="p-3 bg-green-900/20 rounded-lg border border-green-800/30 text-xs text-green-400">
+          Settings saved. Claude API is configured.
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Performance Logging Modal
+const PerformanceLogModal = ({ post, onClose, onSave }) => {
+  const [formData, setFormData] = useState({
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    leads: 0,
+    rating: 5,
+    notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    await onSave({
+      ...formData,
+      post_id: post.id,
+      content: post.content,
+      platform: post.platform,
+      pillar: post.pillar,
+      posted_at: new Date().toISOString(),
+      day_of_week: new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+      hour: new Date().getHours(),
+      length: post.content.length,
+    });
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 rounded-xl border border-slate-800 w-full max-w-md">
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+          <h3 className="text-lg font-medium text-white">Log Performance</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white">X</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+          <div className="p-3 bg-slate-800/50 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <PlatformIcon platform={post.platform} className="w-4 h-4 text-slate-400" />
+              <span className="text-xs text-slate-400">{post.pillar}</span>
+            </div>
+            <p className="text-sm text-slate-300 line-clamp-2">{post.content}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Likes</label>
+              <input type="number" min="0" value={formData.likes} onChange={(e) => setFormData(p => ({ ...p, likes: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Comments</label>
+              <input type="number" min="0" value={formData.comments} onChange={(e) => setFormData(p => ({ ...p, comments: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Shares</label>
+              <input type="number" min="0" value={formData.shares} onChange={(e) => setFormData(p => ({ ...p, shares: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Leads</label>
+              <input type="number" min="0" value={formData.leads} onChange={(e) => setFormData(p => ({ ...p, leads: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none" />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-500 mb-2 block">Rating</label>
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5].map(r => (
+                <button key={r} type="button" onClick={() => setFormData(p => ({ ...p, rating: r }))} className={`w-10 h-10 rounded-lg text-sm ${formData.rating >= r ? 'bg-yellow-500 text-slate-900' : 'bg-slate-800 text-slate-400'}`}>{r}</button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Notes (optional)</label>
+            <textarea value={formData.notes} onChange={(e) => setFormData(p => ({ ...p, notes: e.target.value }))} placeholder="What worked well? What to improve?" className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none resize-none" rows={2} />
+          </div>
+
+          <button type="submit" disabled={saving} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 disabled:opacity-50 flex items-center justify-center gap-2">
+            {saving ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Saving...</> : 'Save Performance'}
+          </button>
+        </form>
       </div>
     </div>
-    <div>
-      <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
-      <div className="space-y-3">
-        <div><label className="text-xs text-slate-500 mb-1 block">Buffer API Key</label><input type="password" placeholder="Enter your Buffer API key" className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none" /></div>
-        <div><label className="text-xs text-slate-500 mb-1 block">Claude API Key</label><input type="password" placeholder="Enter your Claude API key" className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none" /></div>
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 // Main App
 export default function ContentStudio() {
   const [activeTab, setActiveTab] = useState('generate');
-  const [posts, setPosts] = useState([
-    { id: 1, content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00' },
-    { id: 2, content: "Web3 doesn't need more hype. It needs more builders.", platform: 'x', status: 'pending', pillar: 'Web3', createdAt: '2025-01-12', scheduledFor: null },
-    { id: 3, content: "Athletes have millions of followers but don't own the relationship.", platform: 'instagram', status: 'approved', pillar: 'Community Building', createdAt: '2025-01-11', scheduledFor: '2025-01-13 12:00' },
-  ]);
-  const [performance] = useState(historicalPerformance);
+  const [posts, setPosts] = useState([]);
+  const [performance, setPerformance] = useState(historicalPerformance);
+  const [settings, setSettings] = useState({ claudeApiKey: '', bufferAccessToken: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [performanceLogPost, setPerformanceLogPost] = useState(null);
+  const [backendAvailable, setBackendAvailable] = useState(false);
+
+  // Demo posts for when backend is not available
+  const demoPosts = [
+    { id: 'demo-1', content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00' },
+    { id: 'demo-2', content: "Web3 doesn't need more hype. It needs more builders.", platform: 'x', status: 'pending', pillar: 'Web3', createdAt: '2025-01-12', scheduledFor: null },
+    { id: 'demo-3', content: "Athletes have millions of followers but don't own the relationship.", platform: 'instagram', status: 'approved', pillar: 'Community Building', createdAt: '2025-01-11', scheduledFor: '2025-01-13 12:00' },
+  ];
+
+  // Load data on mount
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+
+      // Load settings from localStorage first (fallback)
+      const savedSettings = localStorage.getItem('moonboots_settings');
+      if (savedSettings) {
+        try {
+          setSettings(JSON.parse(savedSettings));
+        } catch (e) {
+          console.error('Error parsing saved settings:', e);
+        }
+      }
+
+      // Check if backend is available
+      const isBackendUp = await checkBackendAvailable();
+      setBackendAvailable(isBackendUp);
+
+      if (isBackendUp) {
+        try {
+          const [dbPosts, dbPerformance, dbSettings] = await Promise.all([
+            api.getPosts(),
+            api.getPerformance(),
+            api.getSettings(),
+          ]);
+
+          if (dbPosts.length > 0) {
+            setPosts(dbPosts.map(p => ({
+              ...p,
+              createdAt: p.created_at?.split('T')[0],
+              scheduledFor: p.scheduled_for,
+              suggestedTime: p.suggested_time,
+            })));
+          } else {
+            setPosts(demoPosts);
+          }
+
+          if (dbPerformance.length > 0) {
+            setPerformance(dbPerformance.map(p => ({
+              ...p,
+              postedAt: p.posted_at,
+              dayOfWeek: p.day_of_week,
+            })));
+          }
+
+          if (dbSettings) {
+            setSettings({
+              claudeApiKey: dbSettings.claude_api_key || '',
+              bufferAccessToken: dbSettings.buffer_access_token || '',
+            });
+          }
+        } catch (error) {
+          console.error('Error loading from API:', error);
+          setPosts(demoPosts);
+        }
+      } else {
+        // No backend - use demo data
+        setPosts(demoPosts);
+      }
+
+      setLoading(false);
+    };
+
+    loadData();
+  }, []);
+
+  // Save settings
+  const handleSettingsChange = useCallback(async (newSettings) => {
+    setSaving(true);
+
+    // Always save to localStorage
+    localStorage.setItem('moonboots_settings', JSON.stringify(newSettings));
+
+    // Also save to backend if available
+    if (backendAvailable) {
+      await api.saveSettings({
+        claude_api_key: newSettings.claudeApiKey,
+        buffer_access_token: newSettings.bufferAccessToken,
+      });
+    }
+
+    setSettings(newSettings);
+    setSaving(false);
+  }, [backendAvailable]);
 
   const insights = useMemo(() => {
     const optimal = {};
     ['linkedin', 'x', 'instagram'].forEach(platform => {
-      const posts = performance.filter(p => p.platform === platform);
-      if (posts.length > 0) {
-        const best = posts.reduce((a, b) => (a.likes + a.comments * 2 + a.shares * 3) > (b.likes + b.comments * 2 + b.shares * 3) ? a : b);
+      const platformPosts = performance.filter(p => p.platform === platform);
+      if (platformPosts.length > 0) {
+        const best = platformPosts.reduce((a, b) => (a.likes + a.comments * 2 + a.shares * 3) > (b.likes + b.comments * 2 + b.shares * 3) ? a : b);
         optimal[platform] = { day: best.dayOfWeek, hour: best.hour };
       }
     });
     return { optimal };
   }, [performance]);
 
-  const handleGenerate = (newPost) => {
-    setPosts(prev => [...prev, { ...newPost, id: Date.now(), status: 'pending', createdAt: new Date().toISOString().split('T')[0], scheduledFor: null }]);
+  const handleGenerate = useCallback(async (newPost) => {
+    const post = {
+      ...newPost,
+      id: crypto.randomUUID?.() || Date.now().toString(),
+      status: 'pending',
+      createdAt: new Date().toISOString().split('T')[0],
+      scheduledFor: null,
+    };
+
+    // Save to backend if available
+    if (backendAvailable) {
+      const savedPost = await api.createPost({
+        content: post.content,
+        platform: post.platform,
+        pillar: post.pillar,
+        status: 'pending',
+        suggested_time: post.suggestedTime,
+      });
+      if (savedPost) {
+        post.id = savedPost.id;
+      }
+    }
+
+    setPosts(prev => [...prev, post]);
     setActiveTab('queue');
-  };
+  }, [backendAvailable]);
+
+  const handleApprove = useCallback(async (id) => {
+    const scheduledFor = '2025-01-15 09:00';
+
+    if (backendAvailable && !String(id).startsWith('demo-')) {
+      await api.updatePost(id, { status: 'approved', scheduled_for: scheduledFor });
+    }
+
+    setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved', scheduledFor } : p));
+  }, [backendAvailable]);
+
+  const handleReject = useCallback(async (id) => {
+    if (backendAvailable && !String(id).startsWith('demo-')) {
+      await api.updatePost(id, { status: 'rejected' });
+    }
+
+    setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p));
+  }, [backendAvailable]);
+
+  const handleMarkPublished = useCallback((post) => {
+    setPerformanceLogPost(post);
+  }, []);
+
+  const handleSavePerformance = useCallback(async (perfData) => {
+    // Save to backend if available
+    if (backendAvailable) {
+      await api.logPerformance({
+        post_id: String(perfData.post_id).startsWith('demo-') ? null : perfData.post_id,
+        content: perfData.content,
+        platform: perfData.platform,
+        pillar: perfData.pillar,
+        posted_at: perfData.posted_at,
+        day_of_week: perfData.day_of_week,
+        hour: perfData.hour,
+        length: perfData.length,
+        likes: perfData.likes,
+        comments: perfData.comments,
+        shares: perfData.shares,
+        leads: perfData.leads,
+        rating: perfData.rating,
+        notes: perfData.notes,
+      });
+
+      // Update post status to published
+      if (!String(perfData.post_id).startsWith('demo-')) {
+        await api.updatePost(perfData.post_id, { status: 'published' });
+      }
+    }
+
+    // Add to local performance data
+    setPerformance(prev => [{
+      id: Date.now(),
+      content: perfData.content,
+      platform: perfData.platform,
+      pillar: perfData.pillar,
+      likes: perfData.likes,
+      comments: perfData.comments,
+      shares: perfData.shares,
+      leads: perfData.leads,
+      rating: perfData.rating,
+      postedAt: perfData.posted_at,
+      dayOfWeek: perfData.day_of_week,
+      hour: perfData.hour,
+      length: perfData.length,
+    }, ...prev]);
+
+    // Update post status
+    setPosts(prev => prev.map(p => p.id === perfData.post_id ? { ...p, status: 'published' } : p));
+  }, [backendAvailable]);
 
   const pendingCount = posts.filter(p => p.status === 'pending').length;
+  const approvedCount = posts.filter(p => p.status === 'approved').length;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -572,15 +1006,35 @@ export default function ContentStudio() {
       </nav>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
-        <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
-          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved', scheduledFor: '2025-01-15 09:00' } : p))} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} />}
-          {activeTab === 'calendar' && <CalendarView posts={posts} />}
-          {activeTab === 'graphics' && <QuoteCardMaker />}
-          {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
-          {activeTab === 'settings' && <SettingsPanel />}
-        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-6 h-6 border-2 border-slate-600 border-t-white rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
+            {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} claudeApiKey={settings.claudeApiKey} />}
+            {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={handleReject} onLogPerformance={handleMarkPublished} />}
+            {activeTab === 'calendar' && <CalendarView posts={posts} />}
+            {activeTab === 'graphics' && <QuoteCardMaker />}
+            {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
+            {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} saving={saving} />}
+          </div>
+        )}
       </main>
+
+      {performanceLogPost && (
+        <PerformanceLogModal
+          post={performanceLogPost}
+          onClose={() => setPerformanceLogPost(null)}
+          onSave={handleSavePerformance}
+        />
+      )}
+
+      {!backendAvailable && (
+        <div className="fixed bottom-4 right-4 p-3 bg-yellow-900/90 rounded-lg border border-yellow-800 text-xs text-yellow-300 max-w-xs">
+          Demo mode: Backend not connected. Data will not persist.
+        </div>
+      )}
     </div>
   );
 }

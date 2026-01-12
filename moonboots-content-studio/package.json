@@ -5,14 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:server": "node server.js",
     "build": "vite build",
-    "preview": "vite preview",
-    "start": "vite preview --port $PORT --host"
+    "start": "NODE_ENV=production node server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "pg": "^8.16.3",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
