@@ -12,11 +12,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// PostgreSQL connection - Railway provides DATABASE_URL
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-});
+// PostgreSQL connection - only create if DATABASE_URL exists
+let pool = null;
+if (process.env.DATABASE_URL) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+}
 
 // Initialize database tables
 async function initDatabase() {
@@ -74,8 +77,14 @@ async function initDatabase() {
 
 // API Routes
 
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', database: !!pool });
+});
+
 // Posts
 app.get('/api/posts', async (req, res) => {
+  if (!pool) return res.json([]);
   try {
     const result = await pool.query('SELECT * FROM posts ORDER BY created_at DESC');
     res.json(result.rows);
@@ -86,6 +95,7 @@ app.get('/api/posts', async (req, res) => {
 });
 
 app.post('/api/posts', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { content, platform, pillar, status, suggested_time, scheduled_for } = req.body;
   try {
     const result = await pool.query(
@@ -102,6 +112,7 @@ app.post('/api/posts', async (req, res) => {
 });
 
 app.patch('/api/posts/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { id } = req.params;
   const updates = req.body;
 
@@ -123,6 +134,7 @@ app.patch('/api/posts/:id', async (req, res) => {
 });
 
 app.delete('/api/posts/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { id } = req.params;
   try {
     await pool.query('DELETE FROM posts WHERE id = $1', [id]);
@@ -135,6 +147,7 @@ app.delete('/api/posts/:id', async (req, res) => {
 
 // Performance
 app.get('/api/performance', async (req, res) => {
+  if (!pool) return res.json([]);
   try {
     const result = await pool.query('SELECT * FROM performance ORDER BY posted_at DESC');
     res.json(result.rows);
@@ -145,6 +158,7 @@ app.get('/api/performance', async (req, res) => {
 });
 
 app.post('/api/performance', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { post_id, content, platform, pillar, posted_at, day_of_week, hour, length, likes, comments, shares, leads, rating, notes } = req.body;
   try {
     const result = await pool.query(
@@ -162,6 +176,7 @@ app.post('/api/performance', async (req, res) => {
 
 // Settings
 app.get('/api/settings', async (req, res) => {
+  if (!pool) return res.json(null);
   try {
     const result = await pool.query('SELECT * FROM settings WHERE id = 1');
     res.json(result.rows[0] || null);
@@ -172,6 +187,7 @@ app.get('/api/settings', async (req, res) => {
 });
 
 app.post('/api/settings', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { claude_api_key, buffer_access_token, buffer_linkedin_profile_id, buffer_instagram_profile_id } = req.body;
   try {
     const result = await pool.query(
@@ -202,17 +218,22 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0';
 
 // Start server
 async function start() {
-  if (process.env.DATABASE_URL) {
-    await initDatabase();
-  } else {
-    console.log('No DATABASE_URL provided - running in demo mode');
+  try {
+    if (pool) {
+      await initDatabase();
+    } else {
+      console.log('No DATABASE_URL provided - running in demo mode');
+    }
+  } catch (error) {
+    console.error('Database init error (continuing anyway):', error.message);
   }
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
   });
 }
 
