@@ -33,16 +33,24 @@ const industryBenchmarks = {
 };
 
 const Logo = () => (
-  <div className="flex flex-col">
-    <div className="flex items-center">
-      <span className="text-lg font-medium text-white tracking-tight">m</span>
-      <div className="w-4 h-4 relative mx-0.5">
-        <div className="absolute inset-0 rounded-full bg-white" />
-        <div className="absolute rounded-full bg-slate-900" style={{ width: '70%', height: '70%', top: '15%', left: '35%' }} />
-      </div>
-      <span className="text-lg font-medium text-white tracking-tight">nboots</span>
+  <div className="flex items-center gap-3">
+    <div className="relative">
+      <svg width="32" height="32" viewBox="0 0 32 32" className="text-white">
+        <defs>
+          <linearGradient id="moonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#ffffff" />
+            <stop offset="100%" stopColor="#94a3b8" />
+          </linearGradient>
+        </defs>
+        <circle cx="16" cy="16" r="14" fill="url(#moonGradient)" />
+        <circle cx="22" cy="12" r="11" fill="#020617" />
+      </svg>
+      <div className="absolute -inset-1 bg-white/20 rounded-full blur-md -z-10" />
     </div>
-    <span className="text-[10px] font-light text-slate-400 tracking-widest self-end -mt-1">content studio</span>
+    <div className="flex flex-col">
+      <span className="text-xl font-semibold text-white tracking-tight leading-none">moonboots</span>
+      <span className="text-[10px] font-medium text-slate-400 tracking-[0.2em] uppercase">content studio</span>
+    </div>
   </div>
 );
 
@@ -66,9 +74,27 @@ const StatusBadge = ({ status }) => {
 };
 
 const TabButton = ({ active, onClick, children, count }) => (
-  <button onClick={onClick} className={`px-4 py-2 text-sm font-medium transition-all ${active ? 'text-white border-b-2 border-white' : 'text-slate-400 hover:text-slate-200'}`}>
+  <button
+    onClick={onClick}
+    className={`relative px-5 py-3 text-sm font-medium transition-all duration-300 ${
+      active
+        ? 'text-white'
+        : 'text-slate-400 hover:text-slate-200'
+    }`}
+  >
     {children}
-    {count !== undefined && <span className={`ml-2 px-1.5 py-0.5 text-xs rounded-full ${active ? 'bg-white text-slate-900' : 'bg-slate-700 text-slate-300'}`}>{count}</span>}
+    {count !== undefined && (
+      <span className={`ml-2 px-2 py-0.5 text-xs rounded-full transition-all duration-300 ${
+        active
+          ? 'bg-gradient-to-r from-blue-500 to-violet-500 text-white'
+          : 'bg-slate-800 text-slate-400'
+      }`}>
+        {count}
+      </span>
+    )}
+    {active && (
+      <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 via-violet-500 to-fuchsia-500 rounded-full" />
+    )}
   </button>
 );
 
@@ -247,21 +273,25 @@ const ContentGenerator = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {insights?.optimal && (
-        <div className="p-4 bg-blue-900/20 rounded-xl border border-blue-800/30">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium text-blue-300">🎯 Your Optimal Posting Windows</h4>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0" />
-              <span className="text-xs text-slate-400">Auto-schedule</span>
+        <div className="relative p-5 bg-gradient-to-br from-blue-950/50 to-slate-900/50 rounded-2xl border border-blue-500/20 backdrop-blur-sm overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl -mr-16 -mt-16" />
+          <div className="relative flex items-center justify-between mb-4">
+            <h4 className="text-sm font-semibold text-blue-300 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-blue-500/20 flex items-center justify-center text-xs">🎯</span>
+              Optimal Posting Windows
+            </h4>
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0" />
+              <span className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors">Auto-schedule</span>
             </label>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-xs">
+          <div className="grid grid-cols-3 gap-4">
             {Object.entries(insights.optimal).map(([platform, data]) => (
-              <div key={platform} className="flex items-center gap-2">
-                <PlatformIcon platform={platform} className="w-3 h-3 text-slate-400" />
-                <span className="text-slate-300">{data.day} {data.hour}:00</span>
+              <div key={platform} className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-xl border border-white/5">
+                <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
+                <span className="text-sm text-slate-200 font-medium">{data.day} {data.hour}:00</span>
               </div>
             ))}
           </div>
@@ -269,28 +299,36 @@ const ContentGenerator = ({
       )}
 
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-sm text-slate-400">Topic or idea</label>
+        <div className="flex items-center justify-between mb-3">
+          <label className="text-sm font-medium text-slate-300">Topic or idea</label>
           <button
             onClick={handleGenerateTopic}
             disabled={generatingTopic}
-            className="px-3 py-1 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700 disabled:opacity-50 flex items-center gap-1.5"
+            className="px-3 py-1.5 text-xs bg-gradient-to-r from-slate-800 to-slate-800 hover:from-blue-900/50 hover:to-violet-900/50 text-slate-300 rounded-lg border border-slate-700/50 hover:border-blue-500/30 disabled:opacity-50 flex items-center gap-2 transition-all duration-300"
           >
             {generatingTopic ? (
-              <><div className="w-3 h-3 border-2 border-slate-500 border-t-slate-300 rounded-full animate-spin" />Thinking...</>
+              <><div className="w-3 h-3 border-2 border-slate-500 border-t-blue-400 rounded-full animate-spin" />Thinking...</>
             ) : (
               <>🎲 Suggest Topic</>
             )}
           </button>
         </div>
-        <textarea value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g., Why most AI strategies fail in the first year..." className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 resize-none" rows={3} />
+        <textarea value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g., Why most AI strategies fail in the first year..." className="w-full px-4 py-4 bg-slate-900/50 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:bg-slate-900/70 resize-none transition-all duration-300" rows={3} />
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Content pillar</label>
+        <label className="block text-sm font-medium text-slate-300 mb-3">Content pillar</label>
         <div className="flex flex-wrap gap-2">
           {pillars.map(pillar => (
-            <button key={pillar.id} onClick={() => setSelectedPillar(pillar.id)} className={`px-3 py-1.5 text-sm rounded-full border transition-all ${selectedPillar === pillar.id ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-slate-300 border-slate-700 hover:border-slate-500'}`}>
+            <button
+              key={pillar.id}
+              onClick={() => setSelectedPillar(pillar.id)}
+              className={`px-4 py-2 text-sm rounded-xl border transition-all duration-300 ${
+                selectedPillar === pillar.id
+                  ? 'bg-gradient-to-r from-blue-500 to-violet-500 text-white border-transparent shadow-lg shadow-blue-500/20'
+                  : 'bg-slate-900/50 text-slate-300 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/50'
+              }`}
+            >
               {pillar.name}
             </button>
           ))}
@@ -298,13 +336,20 @@ const ContentGenerator = ({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Generate for</label>
-        <div className="flex gap-4">
+        <label className="block text-sm font-medium text-slate-300 mb-3">Generate for</label>
+        <div className="flex gap-3">
           {['linkedin', 'x', 'instagram'].map(platform => (
-            <label key={platform} className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={platforms[platform]} onChange={(e) => setPlatforms(prev => ({ ...prev, [platform]: e.target.checked }))} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-white focus:ring-0" />
-              <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
-              <span className="text-sm text-slate-300">{platform === 'x' ? 'X' : platform}</span>
+            <label
+              key={platform}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all duration-300 ${
+                platforms[platform]
+                  ? 'bg-slate-800/70 border-slate-600'
+                  : 'bg-slate-900/30 border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <input type="checkbox" checked={platforms[platform]} onChange={(e) => setPlatforms(prev => ({ ...prev, [platform]: e.target.checked }))} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0" />
+              <PlatformIcon platform={platform} className={`w-4 h-4 transition-colors ${platforms[platform] ? 'text-slate-200' : 'text-slate-500'}`} />
+              <span className={`text-sm capitalize transition-colors ${platforms[platform] ? 'text-slate-200' : 'text-slate-400'}`}>{platform === 'x' ? 'X' : platform}</span>
             </label>
           ))}
         </div>
@@ -312,8 +357,12 @@ const ContentGenerator = ({
 
       {/* Instagram Image Template Selection */}
       {platforms.instagram && (
-        <div className="p-4 bg-pink-900/20 rounded-xl border border-pink-800/30">
-          <label className="block text-sm text-pink-300 mb-3">📸 Instagram Image Template</label>
+        <div className="relative p-5 bg-gradient-to-br from-pink-950/40 to-slate-900/50 rounded-2xl border border-pink-500/20 backdrop-blur-sm overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-pink-500/10 rounded-full blur-2xl -mr-16 -mt-16" />
+          <label className="relative block text-sm font-semibold text-pink-300 mb-4 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-lg bg-pink-500/20 flex items-center justify-center text-xs">📸</span>
+            Instagram Image Template
+          </label>
           <div className="grid grid-cols-2 gap-2">
             {instagramTemplates.map(template => (
               <button
@@ -338,38 +387,72 @@ const ContentGenerator = ({
       )}
 
       {!claudeApiKey && (
-        <div className="p-3 bg-yellow-900/20 rounded-lg border border-yellow-800/30 text-xs text-yellow-400">
-          No Claude API key configured. Using demo content. Add your key in Settings for AI-generated content.
+        <div className="p-4 bg-amber-950/30 rounded-xl border border-amber-500/20 text-sm text-amber-400 flex items-start gap-3">
+          <span className="text-lg">💡</span>
+          <div>
+            <p className="font-medium">Demo Mode</p>
+            <p className="text-xs text-slate-400 mt-1">Add your Claude API key in Settings for AI-generated content.</p>
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="p-3 bg-red-900/20 rounded-lg border border-red-800/30 text-xs text-red-400">
-          {error}
+        <div className="p-4 bg-red-950/30 rounded-xl border border-red-500/20 text-sm text-red-400 flex items-start gap-3">
+          <span className="text-lg">⚠️</span>
+          <p>{error}</p>
         </div>
       )}
 
-      <button onClick={handleGenerate} disabled={!topic || generating} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-        {generating ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Generating...</> : <>✨ Generate Content</>}
+      <button
+        onClick={handleGenerate}
+        disabled={!topic || generating}
+        className="group relative w-full py-4 bg-gradient-to-r from-blue-500 to-violet-500 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-violet-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all duration-300 overflow-hidden"
+      >
+        <span className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+        {generating ? (
+          <>
+            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Generating...
+          </>
+        ) : (
+          <>
+            <span className="text-lg">✨</span>
+            Generate Content
+          </>
+        )}
       </button>
 
       {generatedContent && (
-        <div className="space-y-4 pt-4 border-t border-slate-800">
-          <h3 className="text-sm font-medium text-slate-300">Generated Content</h3>
+        <div className="space-y-4 pt-6">
+          <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            Generated Content
+          </h3>
           {Object.entries(generatedContent).map(([platform, content]) => content && platforms[platform] && (
-            <div key={platform} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
-                  <span className="text-sm text-slate-300">{platform === 'x' ? 'X (Manual)' : platform}</span>
-                  {useOptimalTiming && insights?.optimal?.[platform] && <span className="text-xs text-blue-400">→ {insights.optimal[platform].day} {insights.optimal[platform].hour}:00</span>}
+            <div key={platform} className="p-5 bg-slate-900/50 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center">
+                    <PlatformIcon platform={platform} className="w-4 h-4 text-slate-300" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium text-slate-200 capitalize">{platform === 'x' ? 'X (Manual)' : platform}</span>
+                    {useOptimalTiming && insights?.optimal?.[platform] && (
+                      <span className="block text-xs text-blue-400">🎯 {insights.optimal[platform].day} {insights.optimal[platform].hour}:00</span>
+                    )}
+                  </div>
                   {platform === 'instagram' && instagramTemplate && (
-                    <span className="text-xs text-pink-400">📸 {instagramTemplates.find(t => t.id === instagramTemplate)?.name}</span>
+                    <span className="text-xs px-2 py-1 bg-pink-500/20 text-pink-400 rounded-lg">📸 {instagramTemplates.find(t => t.id === instagramTemplate)?.name}</span>
                   )}
                 </div>
-                <button onClick={() => handleAddToQueue(platform)} className="px-3 py-1 text-xs bg-white text-slate-900 rounded hover:bg-slate-100">Add to Queue</button>
+                <button
+                  onClick={() => handleAddToQueue(platform)}
+                  className="px-4 py-2 text-sm bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 transition-colors shadow-sm"
+                >
+                  Add to Queue →
+                </button>
               </div>
-              <p className="text-sm text-slate-300 whitespace-pre-wrap">{content}</p>
+              <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
             </div>
           ))}
         </div>
@@ -377,8 +460,8 @@ const ContentGenerator = ({
 
       {/* Generation History - shows previous prompt if content was cleared */}
       {!generatedContent && topic && (
-        <div className="p-3 bg-slate-800/30 rounded-lg border border-slate-700/30 text-xs text-slate-500">
-          Last topic: "{topic.substring(0, 100)}{topic.length > 100 ? '...' : ''}"
+        <div className="p-4 bg-slate-900/30 rounded-xl border border-slate-800/50 text-xs text-slate-500">
+          <span className="text-slate-400">Last topic:</span> "{topic.substring(0, 100)}{topic.length > 100 ? '...' : ''}"
         </div>
       )}
     </div>
@@ -1269,32 +1352,51 @@ export default function ContentStudio() {
   const approvedCount = posts.filter(p => p.status === 'approved').length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <header className="border-b border-slate-800/50">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-[#020617] text-white relative overflow-hidden">
+      {/* Background gradient effects */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 right-1/4 w-80 h-80 bg-violet-600/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 left-1/3 w-72 h-72 bg-fuchsia-600/5 rounded-full blur-3xl" />
+      </div>
+
+      {/* Header */}
+      <header className="relative z-10 border-b border-white/5 backdrop-blur-xl bg-slate-950/50">
+        <div className="max-w-6xl mx-auto px-8 py-5 flex items-center justify-between">
           <Logo />
           <div className="flex items-center gap-4">
-            <span className="text-xs text-slate-500">js@moonbootsconsultancy.net</span>
-            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm">JS</div>
+            <span className="text-sm text-slate-400 hidden sm:block">js@moonbootsconsultancy.net</span>
+            <div className="relative group">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-sm font-medium shadow-lg shadow-blue-500/20 ring-2 ring-white/10 transition-all duration-300 group-hover:ring-white/20 group-hover:shadow-blue-500/30">
+                JS
+              </div>
+              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-950" />
+            </div>
           </div>
         </div>
       </header>
 
-      <nav className="border-b border-slate-800/50">
-        <div className="max-w-5xl mx-auto px-6 flex gap-1 overflow-x-auto">
-          <TabButton active={activeTab === 'generate'} onClick={() => setActiveTab('generate')}>✨ Generate</TabButton>
-          <TabButton active={activeTab === 'queue'} onClick={() => setActiveTab('queue')} count={pendingCount}>📋 Queue</TabButton>
-          <TabButton active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')}>📅 Calendar</TabButton>
-          <TabButton active={activeTab === 'graphics'} onClick={() => setActiveTab('graphics')}>🎨 Graphics</TabButton>
-          <TabButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')}>🧠 Insights</TabButton>
-          <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}>⚙️ Settings</TabButton>
+      {/* Navigation */}
+      <nav className="relative z-10 border-b border-white/5 backdrop-blur-xl bg-slate-950/30">
+        <div className="max-w-6xl mx-auto px-8 flex gap-1 overflow-x-auto scrollbar-hide">
+          <TabButton active={activeTab === 'generate'} onClick={() => setActiveTab('generate')}>Generate</TabButton>
+          <TabButton active={activeTab === 'queue'} onClick={() => setActiveTab('queue')} count={pendingCount}>Queue</TabButton>
+          <TabButton active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')}>Calendar</TabButton>
+          <TabButton active={activeTab === 'graphics'} onClick={() => setActiveTab('graphics')}>Graphics</TabButton>
+          <TabButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')}>Insights</TabButton>
+          <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}>Settings</TabButton>
         </div>
       </nav>
 
-      <main className="max-w-5xl mx-auto px-6 py-8">
+      {/* Main Content */}
+      <main className="relative z-10 max-w-6xl mx-auto px-8 py-10">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 border-2 border-slate-600 border-t-white rounded-full animate-spin" />
+          <div className="flex flex-col items-center justify-center py-20 gap-4">
+            <div className="relative">
+              <div className="w-10 h-10 border-2 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
+              <div className="absolute inset-0 w-10 h-10 border-2 border-transparent border-b-violet-500 rounded-full animate-spin animation-delay-150" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+            </div>
+            <span className="text-sm text-slate-500">Loading your content studio...</span>
           </div>
         ) : (
           <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
@@ -1335,8 +1437,14 @@ export default function ContentStudio() {
       )}
 
       {!backendAvailable && (
-        <div className="fixed bottom-4 right-4 p-3 bg-yellow-900/90 rounded-lg border border-yellow-800 text-xs text-yellow-300 max-w-xs">
-          Demo mode: Backend not connected. Data will not persist.
+        <div className="fixed bottom-6 right-6 p-4 bg-slate-900/90 backdrop-blur-xl rounded-xl border border-amber-500/20 text-sm text-amber-400 max-w-xs shadow-xl shadow-black/20">
+          <div className="flex items-start gap-3">
+            <span className="text-lg">⚡</span>
+            <div>
+              <p className="font-medium">Demo Mode</p>
+              <p className="text-xs text-slate-400 mt-1">Backend not connected. Data will not persist.</p>
+            </div>
+          </div>
         </div>
       )}
     </div>
