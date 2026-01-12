@@ -828,7 +828,7 @@ const GraphicsImageMaker = ({
   ];
 
   const platforms = [
-    { id: 'instagram', name: 'Instagram', width: 1080, height: 1080, aspect: '1:1' },
+    { id: 'instagram', name: 'Instagram', width: 1080, height: 1350, aspect: '4:5' },
     { id: 'x', name: 'X (Twitter)', width: 1200, height: 675, aspect: '16:9' },
     { id: 'linkedin', name: 'LinkedIn', width: 1200, height: 627, aspect: '1.91:1' },
   ];
