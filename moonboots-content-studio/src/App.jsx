@@ -791,109 +791,238 @@ const CalendarView = ({ posts }) => {
   );
 };
 
-// Quote Card Maker
-const QuoteCardMaker = () => {
-  const [quote, setQuote] = useState('');
+// Graphics Image Maker - Templates and Platform Support
+const GraphicsImageMaker = () => {
+  const [content, setContent] = useState('');
+  const [secondaryContent, setSecondaryContent] = useState('');
   const [style, setStyle] = useState('dark');
+  const [template, setTemplate] = useState('quote');
+  const [platform, setPlatform] = useState('instagram');
   const [downloading, setDownloading] = useState(false);
+
+  const templates = [
+    { id: 'quote', name: 'Quote Card', description: 'Bold text on gradient background', icon: '💬' },
+    { id: 'tips', name: 'Tips List', description: 'Numbered tips with visual hierarchy', icon: '📝' },
+    { id: 'stat', name: 'Stat Highlight', description: 'Big number with context', icon: '📊' },
+    { id: 'before-after', name: 'Before/After', description: 'Comparison split view', icon: '↔️' },
+    { id: 'question', name: 'Question Hook', description: 'Engaging question overlay', icon: '❓' },
+  ];
+
+  const platforms = [
+    { id: 'instagram', name: 'Instagram', width: 1080, height: 1080, aspect: '1:1' },
+    { id: 'x', name: 'X (Twitter)', width: 1200, height: 675, aspect: '16:9' },
+    { id: 'linkedin', name: 'LinkedIn', width: 1200, height: 627, aspect: '1.91:1' },
+  ];
 
   const styleConfigs = {
     dark: { bg: '#0f172a', text: '#ffffff', accent: '#94a3b8', gradient: null },
     light: { bg: '#ffffff', text: '#0f172a', accent: '#64748b', gradient: null },
     gradient: { bg: '#0f172a', text: '#ffffff', accent: '#cbd5e1', gradient: ['#0f172a', '#1e3a5f'] },
+    vibrant: { bg: '#0f172a', text: '#ffffff', accent: '#a78bfa', gradient: ['#4f46e5', '#7c3aed'] },
   };
 
   const tailwindStyles = {
     dark: { bg: 'bg-slate-900', text: 'text-white', accent: 'text-slate-400' },
     light: { bg: 'bg-white', text: 'text-slate-900', accent: 'text-slate-500' },
     gradient: { bg: 'bg-gradient-to-br from-slate-900 to-blue-900', text: 'text-white', accent: 'text-slate-300' },
+    vibrant: { bg: 'bg-gradient-to-br from-indigo-600 to-violet-600', text: 'text-white', accent: 'text-violet-200' },
   };
 
   const s = tailwindStyles[style];
   const config = styleConfigs[style];
+  const selectedPlatform = platforms.find(p => p.id === platform);
+  const selectedTemplate = templates.find(t => t.id === template);
+
+  const getPlaceholder = () => {
+    switch (template) {
+      case 'quote': return 'Enter your quote or key insight...';
+      case 'tips': return 'Enter tips separated by new lines...\n1. First tip\n2. Second tip\n3. Third tip';
+      case 'stat': return 'Enter the big number (e.g., 73%)';
+      case 'before-after': return 'Enter the "Before" text...';
+      case 'question': return 'Enter your engaging question...';
+      default: return 'Enter your content...';
+    }
+  };
+
+  const getSecondaryPlaceholder = () => {
+    switch (template) {
+      case 'stat': return 'Enter context (e.g., of companies fail in year one)';
+      case 'before-after': return 'Enter the "After" text...';
+      default: return '';
+    }
+  };
+
+  const drawMoonLogo = (ctx, x, y, config, size = 14) => {
+    ctx.fillStyle = config.text;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = config.gradient ? config.gradient[0] : config.bg;
+    ctx.beginPath();
+    ctx.arc(x + size * 0.57, y - size * 0.14, size * 0.86, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const wrapText = (ctx, text, maxWidth, lineHeight) => {
+    const words = text.split(' ');
+    let line = '';
+    const lines = [];
+    for (let word of words) {
+      const testLine = line + word + ' ';
+      if (ctx.measureText(testLine).width > maxWidth && line !== '') {
+        lines.push(line.trim());
+        line = word + ' ';
+      } else {
+        line = testLine;
+      }
+    }
+    lines.push(line.trim());
+    return lines;
+  };
 
   const handleDownload = async () => {
-    if (!quote) return;
+    if (!content) return;
     setDownloading(true);
 
     try {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
-      const size = 1080; // Instagram square size
-      canvas.width = size;
-      canvas.height = size;
+      const { width, height } = selectedPlatform;
+      canvas.width = width;
+      canvas.height = height;
 
       // Background
       if (config.gradient) {
-        const gradient = ctx.createLinearGradient(0, 0, size, size);
+        const gradient = ctx.createLinearGradient(0, 0, width, height);
         gradient.addColorStop(0, config.gradient[0]);
         gradient.addColorStop(1, config.gradient[1]);
         ctx.fillStyle = gradient;
       } else {
         ctx.fillStyle = config.bg;
       }
-      ctx.fillRect(0, 0, size, size);
+      ctx.fillRect(0, 0, width, height);
 
-      // Logo area - draw moonboots text with moon icon
-      const logoY = 80;
+      const padding = Math.min(width, height) * 0.055;
+      const logoY = padding + 30;
+
+      // Draw logo
+      drawMoonLogo(ctx, padding + 14, logoY, config);
       ctx.fillStyle = config.text;
       ctx.font = '600 28px system-ui, -apple-system, sans-serif';
+      ctx.fillText('moonboots', padding + 42, logoY + 8);
 
-      // Draw crescent moon icon
-      const moonX = 60;
-      const moonY = logoY;
-      const moonRadius = 14;
-      ctx.beginPath();
-      ctx.arc(moonX, moonY, moonRadius, 0, Math.PI * 2);
-      ctx.fill();
-      // Cut out crescent
-      ctx.fillStyle = config.bg;
-      ctx.beginPath();
-      ctx.arc(moonX + 8, moonY - 2, moonRadius - 2, 0, Math.PI * 2);
-      ctx.fill();
+      // Template-specific rendering
+      const contentArea = { x: padding, y: logoY + 60, width: width - padding * 2, height: height - logoY - 120 };
 
-      // Logo text
-      ctx.fillStyle = config.text;
-      ctx.fillText('moonboots', moonX + 28, logoY + 8);
-
-      // Quote text - word wrap
-      ctx.font = '300 42px system-ui, -apple-system, sans-serif';
-      const maxWidth = size - 120;
-      const lineHeight = 56;
-      const words = quote.split(' ');
-      let line = '';
-      let y = size / 2 - 60;
-      const lines = [];
-
-      for (let word of words) {
-        const testLine = line + word + ' ';
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > maxWidth && line !== '') {
-          lines.push(line.trim());
-          line = word + ' ';
-        } else {
-          line = testLine;
+      if (template === 'quote') {
+        const fontSize = Math.min(width, height) * 0.039;
+        ctx.font = `300 ${fontSize}px system-ui, -apple-system, sans-serif`;
+        const lines = wrapText(ctx, content, contentArea.width, fontSize * 1.4);
+        const totalHeight = lines.length * fontSize * 1.4;
+        let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
+        ctx.fillStyle = config.text;
+        for (let line of lines) {
+          ctx.fillText(line, contentArea.x, y);
+          y += fontSize * 1.4;
         }
-      }
-      lines.push(line.trim());
-
-      // Center vertically
-      const totalHeight = lines.length * lineHeight;
-      y = (size - totalHeight) / 2;
-
-      for (let textLine of lines) {
-        ctx.fillText(textLine, 60, y);
-        y += lineHeight;
+      } else if (template === 'tips') {
+        const tips = content.split('\n').filter(t => t.trim());
+        const fontSize = Math.min(width, height) * 0.028;
+        const lineHeight = fontSize * 2;
+        let y = contentArea.y + 40;
+        ctx.fillStyle = config.text;
+        tips.forEach((tip, i) => {
+          const cleanTip = tip.replace(/^\d+\.\s*/, '');
+          ctx.font = `700 ${fontSize * 1.5}px system-ui`;
+          ctx.fillStyle = config.accent;
+          ctx.fillText(`${i + 1}`, contentArea.x, y);
+          ctx.font = `400 ${fontSize}px system-ui`;
+          ctx.fillStyle = config.text;
+          const tipLines = wrapText(ctx, cleanTip, contentArea.width - 50, fontSize * 1.3);
+          tipLines.forEach((line, li) => {
+            ctx.fillText(line, contentArea.x + 40, y + li * fontSize * 1.3);
+          });
+          y += lineHeight + (tipLines.length - 1) * fontSize * 1.3;
+        });
+      } else if (template === 'stat') {
+        const statFontSize = Math.min(width, height) * 0.15;
+        const contextFontSize = Math.min(width, height) * 0.032;
+        ctx.font = `800 ${statFontSize}px system-ui`;
+        ctx.fillStyle = config.text;
+        const statY = height / 2;
+        ctx.fillText(content, contentArea.x, statY);
+        if (secondaryContent) {
+          ctx.font = `300 ${contextFontSize}px system-ui`;
+          ctx.fillStyle = config.accent;
+          const contextLines = wrapText(ctx, secondaryContent, contentArea.width, contextFontSize * 1.4);
+          let y = statY + 30;
+          contextLines.forEach(line => {
+            ctx.fillText(line, contentArea.x, y);
+            y += contextFontSize * 1.4;
+          });
+        }
+      } else if (template === 'before-after') {
+        const halfWidth = width / 2 - padding;
+        const fontSize = Math.min(width, height) * 0.028;
+        const labelSize = Math.min(width, height) * 0.02;
+        // Before side
+        ctx.fillStyle = config.accent;
+        ctx.font = `600 ${labelSize}px system-ui`;
+        ctx.fillText('BEFORE', contentArea.x, contentArea.y + 30);
+        ctx.fillStyle = config.text;
+        ctx.font = `300 ${fontSize}px system-ui`;
+        const beforeLines = wrapText(ctx, content, halfWidth - 40, fontSize * 1.4);
+        let y = contentArea.y + 70;
+        beforeLines.forEach(line => {
+          ctx.fillText(line, contentArea.x, y);
+          y += fontSize * 1.4;
+        });
+        // Divider
+        ctx.strokeStyle = config.accent;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(width / 2, contentArea.y);
+        ctx.lineTo(width / 2, height - padding - 40);
+        ctx.stroke();
+        // After side
+        ctx.fillStyle = config.accent;
+        ctx.font = `600 ${labelSize}px system-ui`;
+        ctx.fillText('AFTER', width / 2 + 20, contentArea.y + 30);
+        ctx.fillStyle = config.text;
+        ctx.font = `300 ${fontSize}px system-ui`;
+        const afterLines = wrapText(ctx, secondaryContent || '', halfWidth - 40, fontSize * 1.4);
+        y = contentArea.y + 70;
+        afterLines.forEach(line => {
+          ctx.fillText(line, width / 2 + 20, y);
+          y += fontSize * 1.4;
+        });
+      } else if (template === 'question') {
+        const fontSize = Math.min(width, height) * 0.045;
+        ctx.font = `600 ${fontSize}px system-ui`;
+        const lines = wrapText(ctx, content, contentArea.width, fontSize * 1.3);
+        const totalHeight = lines.length * fontSize * 1.3;
+        let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
+        ctx.fillStyle = config.text;
+        lines.forEach(line => {
+          ctx.fillText(line, contentArea.x, y);
+          y += fontSize * 1.3;
+        });
+        // Question mark accent
+        ctx.fillStyle = config.accent;
+        ctx.globalAlpha = 0.15;
+        ctx.font = `900 ${height * 0.6}px system-ui`;
+        ctx.fillText('?', width - height * 0.35, height * 0.7);
+        ctx.globalAlpha = 1;
       }
 
       // Footer
       ctx.fillStyle = config.accent;
-      ctx.font = '400 24px system-ui, -apple-system, sans-serif';
-      ctx.fillText('moonbootsconsultancy.net', 60, size - 60);
+      ctx.font = '400 22px system-ui, -apple-system, sans-serif';
+      ctx.fillText('moonbootsconsultancy.net', padding, height - padding - 10);
 
       // Download
       const link = document.createElement('a');
-      link.download = `moonboots-quote-${Date.now()}.png`;
+      link.download = `moonboots-${template}-${platform}-${Date.now()}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
     } catch (err) {
@@ -903,44 +1032,193 @@ const QuoteCardMaker = () => {
     }
   };
 
+  const needsSecondaryContent = template === 'stat' || template === 'before-after';
+  const aspectRatio = selectedPlatform.width / selectedPlatform.height;
+
   return (
     <div className="space-y-6">
+      {/* Template Selection */}
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Quote text</label>
-        <textarea value={quote} onChange={(e) => setQuote(e.target.value)} placeholder="Enter your quote..." className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg text-white placeholder-slate-500 focus:outline-none resize-none" rows={3} />
-      </div>
-      <div>
-        <label className="block text-sm text-slate-400 mb-2">Style</label>
-        <div className="flex gap-2">
-          {Object.keys(tailwindStyles).map(st => <button key={st} onClick={() => setStyle(st)} className={`px-4 py-2 text-sm rounded-lg border capitalize ${style === st ? 'bg-white text-slate-900' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}>{st}</button>)}
+        <label className="block text-sm font-medium text-slate-300 mb-3">Template</label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {templates.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTemplate(t.id)}
+              className={`p-3 rounded-xl border text-left transition-all ${
+                template === t.id
+                  ? 'bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 border-violet-500/50 ring-1 ring-violet-500/30'
+                  : 'bg-slate-800/30 border-slate-700/50 hover:border-slate-600'
+              }`}
+            >
+              <span className="text-xl mb-1 block">{t.icon}</span>
+              <span className={`text-sm font-medium block ${template === t.id ? 'text-white' : 'text-slate-300'}`}>{t.name}</span>
+              <span className="text-xs text-slate-500 line-clamp-1">{t.description}</span>
+            </button>
+          ))}
         </div>
       </div>
+
+      {/* Platform Selection */}
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Preview</label>
-        <div className={`aspect-square max-w-md mx-auto ${s.bg} rounded-xl p-8 flex flex-col justify-between`}>
+        <label className="block text-sm font-medium text-slate-300 mb-3">Platform</label>
+        <div className="flex flex-wrap gap-2">
+          {platforms.map(p => (
+            <button
+              key={p.id}
+              onClick={() => setPlatform(p.id)}
+              className={`px-4 py-2.5 rounded-lg border flex items-center gap-2 transition-all ${
+                platform === p.id
+                  ? 'bg-white text-slate-900 border-white'
+                  : 'bg-slate-800/50 text-slate-300 border-slate-700/50 hover:border-slate-600'
+              }`}
+            >
+              <span className="font-medium text-sm">{p.name}</span>
+              <span className={`text-xs ${platform === p.id ? 'text-slate-600' : 'text-slate-500'}`}>{p.aspect}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Style Selection */}
+      <div>
+        <label className="block text-sm font-medium text-slate-300 mb-3">Style</label>
+        <div className="flex flex-wrap gap-2">
+          {Object.keys(tailwindStyles).map(st => (
+            <button
+              key={st}
+              onClick={() => setStyle(st)}
+              className={`px-4 py-2 text-sm rounded-lg border capitalize transition-all ${
+                style === st
+                  ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white border-transparent'
+                  : 'bg-slate-800/50 text-slate-300 border-slate-700/50 hover:border-slate-600'
+              }`}
+            >
+              {st}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content Input */}
+      <div>
+        <label className="block text-sm font-medium text-slate-300 mb-2">
+          {template === 'stat' ? 'Statistic' : template === 'before-after' ? 'Before' : 'Content'}
+        </label>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder={getPlaceholder()}
+          className="w-full px-4 py-3 bg-slate-800/30 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none transition-all"
+          rows={template === 'tips' ? 5 : 3}
+        />
+      </div>
+
+      {/* Secondary Content Input */}
+      {needsSecondaryContent && (
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-2">
+            {template === 'stat' ? 'Context' : 'After'}
+          </label>
+          <textarea
+            value={secondaryContent}
+            onChange={(e) => setSecondaryContent(e.target.value)}
+            placeholder={getSecondaryPlaceholder()}
+            className="w-full px-4 py-3 bg-slate-800/30 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none transition-all"
+            rows={2}
+          />
+        </div>
+      )}
+
+      {/* Preview */}
+      <div>
+        <label className="block text-sm font-medium text-slate-300 mb-3">Preview</label>
+        <div
+          className={`mx-auto ${s.bg} rounded-xl p-6 flex flex-col justify-between overflow-hidden`}
+          style={{
+            aspectRatio: `${aspectRatio}`,
+            maxWidth: aspectRatio > 1 ? '100%' : '320px'
+          }}
+        >
           <div className="flex items-center gap-2">
-            <svg width="24" height="24" viewBox="0 0 24 24" className={style === 'light' ? 'text-slate-900' : 'text-white'}>
+            <svg width="20" height="20" viewBox="0 0 24 24" className={style === 'light' ? 'text-slate-900' : 'text-white'}>
               <circle cx="12" cy="12" r="10" fill="currentColor"/>
-              <circle cx="16" cy="10" r="8" fill={style === 'light' ? '#ffffff' : '#0f172a'}/>
+              <circle cx="16" cy="10" r="8" fill={style === 'light' ? '#ffffff' : (config.gradient ? config.gradient[0] : '#0f172a')}/>
             </svg>
-            <span className={`text-sm font-semibold tracking-tight ${s.text}`}>moonboots</span>
+            <span className={`text-xs font-semibold tracking-tight ${s.text}`}>moonboots</span>
           </div>
-          <p className={`text-xl font-light leading-relaxed ${s.text}`}>{quote || "Your quote here..."}</p>
-          <div className={`text-sm ${s.accent}`}>moonbootsconsultancy.net</div>
+
+          <div className="flex-1 flex items-center py-4">
+            {template === 'quote' && (
+              <p className={`text-base font-light leading-relaxed ${s.text}`}>{content || "Your quote here..."}</p>
+            )}
+            {template === 'tips' && (
+              <div className="space-y-2 w-full">
+                {(content || "1. First tip\n2. Second tip\n3. Third tip").split('\n').filter(t => t.trim()).slice(0, 4).map((tip, i) => (
+                  <div key={i} className="flex gap-2">
+                    <span className={`text-sm font-bold ${s.accent}`}>{i + 1}</span>
+                    <span className={`text-xs ${s.text}`}>{tip.replace(/^\d+\.\s*/, '')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {template === 'stat' && (
+              <div>
+                <div className={`text-4xl font-extrabold ${s.text}`}>{content || "73%"}</div>
+                <div className={`text-xs mt-1 ${s.accent}`}>{secondaryContent || "of companies fail..."}</div>
+              </div>
+            )}
+            {template === 'before-after' && (
+              <div className="flex w-full gap-3">
+                <div className="flex-1">
+                  <div className={`text-[10px] font-semibold mb-1 ${s.accent}`}>BEFORE</div>
+                  <div className={`text-xs ${s.text}`}>{content || "Old way..."}</div>
+                </div>
+                <div className={`w-px ${style === 'light' ? 'bg-slate-300' : 'bg-slate-600'}`} />
+                <div className="flex-1">
+                  <div className={`text-[10px] font-semibold mb-1 ${s.accent}`}>AFTER</div>
+                  <div className={`text-xs ${s.text}`}>{secondaryContent || "New way..."}</div>
+                </div>
+              </div>
+            )}
+            {template === 'question' && (
+              <div className="relative w-full">
+                <p className={`text-lg font-semibold leading-snug ${s.text}`}>{content || "What if you could...?"}</p>
+                <span className={`absolute -right-2 -bottom-4 text-6xl font-black opacity-10 ${s.text}`}>?</span>
+              </div>
+            )}
+          </div>
+
+          <div className={`text-[10px] ${s.accent}`}>moonbootsconsultancy.net</div>
         </div>
       </div>
+
+      {/* Download Button */}
       <button
         onClick={handleDownload}
-        disabled={!quote || downloading}
-        className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg disabled:opacity-50 hover:bg-slate-100 flex items-center justify-center gap-2"
+        disabled={!content || downloading}
+        className="w-full py-3.5 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-medium rounded-xl disabled:opacity-50 hover:from-violet-600 hover:to-fuchsia-600 flex items-center justify-center gap-2 transition-all shadow-lg shadow-violet-500/25"
       >
         {downloading ? (
-          <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Generating...</>
+          <>
+            <div className="relative w-5 h-5">
+              <div className="absolute inset-0 border-2 border-white/30 rounded-full" />
+              <div className="absolute inset-0 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            </div>
+            Generating...
+          </>
         ) : (
-          <>↓ Download Image</>
+          <>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Download {selectedPlatform.name} Image
+          </>
         )}
       </button>
-      <p className="text-xs text-slate-500 text-center">Downloads as 1080x1080 PNG (Instagram-ready)</p>
+      <p className="text-xs text-slate-500 text-center">
+        Downloads as {selectedPlatform.width}x{selectedPlatform.height} PNG ({selectedTemplate.name} for {selectedPlatform.name})
+      </p>
     </div>
   );
 };
@@ -1421,7 +1699,7 @@ export default function ContentStudio() {
             )}
             {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={handleReject} onLogPerformance={handleMarkPublished} />}
             {activeTab === 'calendar' && <CalendarView posts={posts} />}
-            {activeTab === 'graphics' && <QuoteCardMaker />}
+            {activeTab === 'graphics' && <GraphicsImageMaker />}
             {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
             {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} saving={saving} />}
           </div>
