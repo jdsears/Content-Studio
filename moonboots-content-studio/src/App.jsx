@@ -805,14 +805,16 @@ const CalendarView = ({ posts }) => {
 const GraphicsImageMaker = () => {
   const [content, setContent] = useState('');
   const [secondaryContent, setSecondaryContent] = useState('');
+  const [carouselTitle, setCarouselTitle] = useState('');
   const [style, setStyle] = useState('dark');
   const [template, setTemplate] = useState('quote');
   const [platform, setPlatform] = useState('instagram');
   const [downloading, setDownloading] = useState(false);
+  const [currentSlide, setCurrentSlide] = useState(0);
 
   const templates = [
     { id: 'quote', name: 'Quote Card', description: 'Bold text on gradient background', icon: '💬' },
-    { id: 'tips', name: 'Tips List', description: 'Numbered tips with visual hierarchy', icon: '📝' },
+    { id: 'tips', name: 'Tips Carousel', description: 'Cover + individual tip slides', icon: '📝' },
     { id: 'stat', name: 'Stat Highlight', description: 'Big number with context', icon: '📊' },
     { id: 'before-after', name: 'Before/After', description: 'Comparison split view', icon: '↔️' },
     { id: 'question', name: 'Question Hook', description: 'Engaging question overlay', icon: '❓' },
@@ -846,7 +848,7 @@ const GraphicsImageMaker = () => {
   const getPlaceholder = () => {
     switch (template) {
       case 'quote': return 'Enter your quote or key insight...';
-      case 'tips': return 'Enter tips separated by new lines...\n1. First tip\n2. Second tip\n3. Third tip';
+      case 'tips': return 'Enter each tip on a new line:\nFirst tip here\nSecond tip here\nThird tip here';
       case 'stat': return 'Enter the big number (e.g., 73%)';
       case 'before-after': return 'Enter the "Before" text...';
       case 'question': return 'Enter your engaging question...';
@@ -861,6 +863,12 @@ const GraphicsImageMaker = () => {
       default: return '';
     }
   };
+
+  // Parse tips for carousel
+  const parsedTips = template === 'tips'
+    ? content.split('\n').filter(t => t.trim()).map(t => t.replace(/^\d+\.\s*/, '').trim())
+    : [];
+  const totalSlides = template === 'tips' ? parsedTips.length + 1 : 1; // +1 for cover slide
 
   const drawMoonLogo = (ctx, x, y, config, size = 14) => {
     ctx.fillStyle = config.text;
@@ -890,151 +898,208 @@ const GraphicsImageMaker = () => {
     return lines;
   };
 
+  // Render a single slide to canvas and return data URL
+  const renderSlide = (slideType, slideContent, slideNumber = null) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const { width, height } = selectedPlatform;
+    canvas.width = width;
+    canvas.height = height;
+
+    // Background
+    if (config.gradient) {
+      const gradient = ctx.createLinearGradient(0, 0, width, height);
+      gradient.addColorStop(0, config.gradient[0]);
+      gradient.addColorStop(1, config.gradient[1]);
+      ctx.fillStyle = gradient;
+    } else {
+      ctx.fillStyle = config.bg;
+    }
+    ctx.fillRect(0, 0, width, height);
+
+    const padding = Math.min(width, height) * 0.055;
+    const logoY = padding + 30;
+
+    // Draw logo
+    drawMoonLogo(ctx, padding + 14, logoY, config);
+    ctx.fillStyle = config.text;
+    ctx.font = '600 28px system-ui, -apple-system, sans-serif';
+    ctx.fillText('moonboots', padding + 42, logoY + 8);
+
+    const contentArea = { x: padding, y: logoY + 60, width: width - padding * 2, height: height - logoY - 120 };
+
+    if (slideType === 'cover') {
+      // Carousel cover slide
+      const titleFontSize = Math.min(width, height) * 0.055;
+      const subtitleFontSize = Math.min(width, height) * 0.028;
+      ctx.font = `700 ${titleFontSize}px system-ui`;
+      ctx.fillStyle = config.text;
+      const titleLines = wrapText(ctx, slideContent, contentArea.width, titleFontSize * 1.2);
+      const totalHeight = titleLines.length * titleFontSize * 1.2;
+      let y = contentArea.y + (contentArea.height - totalHeight) / 2;
+      titleLines.forEach(line => {
+        ctx.fillText(line, contentArea.x, y);
+        y += titleFontSize * 1.2;
+      });
+      // Swipe hint
+      ctx.font = `400 ${subtitleFontSize}px system-ui`;
+      ctx.fillStyle = config.accent;
+      ctx.fillText('Swipe for tips →', contentArea.x, height - padding - 50);
+    } else if (slideType === 'tip') {
+      // Individual tip slide
+      const numberSize = Math.min(width, height) * 0.2;
+      const tipFontSize = Math.min(width, height) * 0.038;
+      // Big number
+      ctx.font = `800 ${numberSize}px system-ui`;
+      ctx.fillStyle = config.accent;
+      ctx.globalAlpha = 0.15;
+      ctx.fillText(slideNumber.toString(), width - padding - numberSize * 0.7, padding + numberSize);
+      ctx.globalAlpha = 1;
+      // Tip number label
+      ctx.font = `600 ${Math.min(width, height) * 0.022}px system-ui`;
+      ctx.fillStyle = config.accent;
+      ctx.fillText(`TIP ${slideNumber}`, contentArea.x, contentArea.y + 20);
+      // Tip content
+      ctx.font = `400 ${tipFontSize}px system-ui`;
+      ctx.fillStyle = config.text;
+      const tipLines = wrapText(ctx, slideContent, contentArea.width * 0.85, tipFontSize * 1.4);
+      let y = contentArea.y + 70;
+      tipLines.forEach(line => {
+        ctx.fillText(line, contentArea.x, y);
+        y += tipFontSize * 1.4;
+      });
+    } else if (slideType === 'quote') {
+      const fontSize = Math.min(width, height) * 0.039;
+      ctx.font = `300 ${fontSize}px system-ui, -apple-system, sans-serif`;
+      const lines = wrapText(ctx, slideContent, contentArea.width, fontSize * 1.4);
+      const totalHeight = lines.length * fontSize * 1.4;
+      let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
+      ctx.fillStyle = config.text;
+      for (let line of lines) {
+        ctx.fillText(line, contentArea.x, y);
+        y += fontSize * 1.4;
+      }
+    } else if (slideType === 'stat') {
+      const statFontSize = Math.min(width, height) * 0.15;
+      const contextFontSize = Math.min(width, height) * 0.032;
+      ctx.font = `800 ${statFontSize}px system-ui`;
+      ctx.fillStyle = config.text;
+      const statY = height / 2;
+      ctx.fillText(slideContent.stat, contentArea.x, statY);
+      if (slideContent.context) {
+        ctx.font = `300 ${contextFontSize}px system-ui`;
+        ctx.fillStyle = config.accent;
+        const contextLines = wrapText(ctx, slideContent.context, contentArea.width, contextFontSize * 1.4);
+        let y = statY + 30;
+        contextLines.forEach(line => {
+          ctx.fillText(line, contentArea.x, y);
+          y += contextFontSize * 1.4;
+        });
+      }
+    } else if (slideType === 'before-after') {
+      const halfWidth = width / 2 - padding;
+      const fontSize = Math.min(width, height) * 0.028;
+      const labelSize = Math.min(width, height) * 0.02;
+      ctx.fillStyle = config.accent;
+      ctx.font = `600 ${labelSize}px system-ui`;
+      ctx.fillText('BEFORE', contentArea.x, contentArea.y + 30);
+      ctx.fillStyle = config.text;
+      ctx.font = `300 ${fontSize}px system-ui`;
+      const beforeLines = wrapText(ctx, slideContent.before, halfWidth - 40, fontSize * 1.4);
+      let y = contentArea.y + 70;
+      beforeLines.forEach(line => {
+        ctx.fillText(line, contentArea.x, y);
+        y += fontSize * 1.4;
+      });
+      ctx.strokeStyle = config.accent;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(width / 2, contentArea.y);
+      ctx.lineTo(width / 2, height - padding - 40);
+      ctx.stroke();
+      ctx.fillStyle = config.accent;
+      ctx.font = `600 ${labelSize}px system-ui`;
+      ctx.fillText('AFTER', width / 2 + 20, contentArea.y + 30);
+      ctx.fillStyle = config.text;
+      ctx.font = `300 ${fontSize}px system-ui`;
+      const afterLines = wrapText(ctx, slideContent.after || '', halfWidth - 40, fontSize * 1.4);
+      y = contentArea.y + 70;
+      afterLines.forEach(line => {
+        ctx.fillText(line, width / 2 + 20, y);
+        y += fontSize * 1.4;
+      });
+    } else if (slideType === 'question') {
+      const fontSize = Math.min(width, height) * 0.045;
+      ctx.font = `600 ${fontSize}px system-ui`;
+      const lines = wrapText(ctx, slideContent, contentArea.width, fontSize * 1.3);
+      const totalHeight = lines.length * fontSize * 1.3;
+      let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
+      ctx.fillStyle = config.text;
+      lines.forEach(line => {
+        ctx.fillText(line, contentArea.x, y);
+        y += fontSize * 1.3;
+      });
+      ctx.fillStyle = config.accent;
+      ctx.globalAlpha = 0.15;
+      ctx.font = `900 ${height * 0.6}px system-ui`;
+      ctx.fillText('?', width - height * 0.35, height * 0.7);
+      ctx.globalAlpha = 1;
+    }
+
+    // Footer
+    ctx.fillStyle = config.accent;
+    ctx.font = '400 22px system-ui, -apple-system, sans-serif';
+    ctx.globalAlpha = 1;
+    ctx.fillText('moonbootsconsultancy.net', padding, height - padding - 10);
+
+    return canvas.toDataURL('image/png');
+  };
+
   const handleDownload = async () => {
     if (!content) return;
     setDownloading(true);
 
     try {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const { width, height } = selectedPlatform;
-      canvas.width = width;
-      canvas.height = height;
+      const timestamp = Date.now();
 
-      // Background
-      if (config.gradient) {
-        const gradient = ctx.createLinearGradient(0, 0, width, height);
-        gradient.addColorStop(0, config.gradient[0]);
-        gradient.addColorStop(1, config.gradient[1]);
-        ctx.fillStyle = gradient;
+      if (template === 'tips' && parsedTips.length > 0) {
+        // Generate carousel: cover slide + individual tip slides
+        const coverTitle = carouselTitle || 'Tips you need to know';
+
+        // Download cover slide
+        const coverData = renderSlide('cover', coverTitle);
+        const coverLink = document.createElement('a');
+        coverLink.download = `moonboots-carousel-0-cover-${timestamp}.png`;
+        coverLink.href = coverData;
+        coverLink.click();
+
+        // Download each tip slide with small delay
+        for (let i = 0; i < parsedTips.length; i++) {
+          await new Promise(r => setTimeout(r, 300));
+          const tipData = renderSlide('tip', parsedTips[i], i + 1);
+          const tipLink = document.createElement('a');
+          tipLink.download = `moonboots-carousel-${i + 1}-tip-${timestamp}.png`;
+          tipLink.href = tipData;
+          tipLink.click();
+        }
       } else {
-        ctx.fillStyle = config.bg;
-      }
-      ctx.fillRect(0, 0, width, height);
-
-      const padding = Math.min(width, height) * 0.055;
-      const logoY = padding + 30;
-
-      // Draw logo
-      drawMoonLogo(ctx, padding + 14, logoY, config);
-      ctx.fillStyle = config.text;
-      ctx.font = '600 28px system-ui, -apple-system, sans-serif';
-      ctx.fillText('moonboots', padding + 42, logoY + 8);
-
-      // Template-specific rendering
-      const contentArea = { x: padding, y: logoY + 60, width: width - padding * 2, height: height - logoY - 120 };
-
-      if (template === 'quote') {
-        const fontSize = Math.min(width, height) * 0.039;
-        ctx.font = `300 ${fontSize}px system-ui, -apple-system, sans-serif`;
-        const lines = wrapText(ctx, content, contentArea.width, fontSize * 1.4);
-        const totalHeight = lines.length * fontSize * 1.4;
-        let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
-        ctx.fillStyle = config.text;
-        for (let line of lines) {
-          ctx.fillText(line, contentArea.x, y);
-          y += fontSize * 1.4;
+        // Single image templates
+        let slideData;
+        if (template === 'quote') {
+          slideData = renderSlide('quote', content);
+        } else if (template === 'stat') {
+          slideData = renderSlide('stat', { stat: content, context: secondaryContent });
+        } else if (template === 'before-after') {
+          slideData = renderSlide('before-after', { before: content, after: secondaryContent });
+        } else if (template === 'question') {
+          slideData = renderSlide('question', content);
         }
-      } else if (template === 'tips') {
-        const tips = content.split('\n').filter(t => t.trim());
-        const fontSize = Math.min(width, height) * 0.028;
-        const lineHeight = fontSize * 2;
-        let y = contentArea.y + 40;
-        ctx.fillStyle = config.text;
-        tips.forEach((tip, i) => {
-          const cleanTip = tip.replace(/^\d+\.\s*/, '');
-          ctx.font = `700 ${fontSize * 1.5}px system-ui`;
-          ctx.fillStyle = config.accent;
-          ctx.fillText(`${i + 1}`, contentArea.x, y);
-          ctx.font = `400 ${fontSize}px system-ui`;
-          ctx.fillStyle = config.text;
-          const tipLines = wrapText(ctx, cleanTip, contentArea.width - 50, fontSize * 1.3);
-          tipLines.forEach((line, li) => {
-            ctx.fillText(line, contentArea.x + 40, y + li * fontSize * 1.3);
-          });
-          y += lineHeight + (tipLines.length - 1) * fontSize * 1.3;
-        });
-      } else if (template === 'stat') {
-        const statFontSize = Math.min(width, height) * 0.15;
-        const contextFontSize = Math.min(width, height) * 0.032;
-        ctx.font = `800 ${statFontSize}px system-ui`;
-        ctx.fillStyle = config.text;
-        const statY = height / 2;
-        ctx.fillText(content, contentArea.x, statY);
-        if (secondaryContent) {
-          ctx.font = `300 ${contextFontSize}px system-ui`;
-          ctx.fillStyle = config.accent;
-          const contextLines = wrapText(ctx, secondaryContent, contentArea.width, contextFontSize * 1.4);
-          let y = statY + 30;
-          contextLines.forEach(line => {
-            ctx.fillText(line, contentArea.x, y);
-            y += contextFontSize * 1.4;
-          });
-        }
-      } else if (template === 'before-after') {
-        const halfWidth = width / 2 - padding;
-        const fontSize = Math.min(width, height) * 0.028;
-        const labelSize = Math.min(width, height) * 0.02;
-        // Before side
-        ctx.fillStyle = config.accent;
-        ctx.font = `600 ${labelSize}px system-ui`;
-        ctx.fillText('BEFORE', contentArea.x, contentArea.y + 30);
-        ctx.fillStyle = config.text;
-        ctx.font = `300 ${fontSize}px system-ui`;
-        const beforeLines = wrapText(ctx, content, halfWidth - 40, fontSize * 1.4);
-        let y = contentArea.y + 70;
-        beforeLines.forEach(line => {
-          ctx.fillText(line, contentArea.x, y);
-          y += fontSize * 1.4;
-        });
-        // Divider
-        ctx.strokeStyle = config.accent;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(width / 2, contentArea.y);
-        ctx.lineTo(width / 2, height - padding - 40);
-        ctx.stroke();
-        // After side
-        ctx.fillStyle = config.accent;
-        ctx.font = `600 ${labelSize}px system-ui`;
-        ctx.fillText('AFTER', width / 2 + 20, contentArea.y + 30);
-        ctx.fillStyle = config.text;
-        ctx.font = `300 ${fontSize}px system-ui`;
-        const afterLines = wrapText(ctx, secondaryContent || '', halfWidth - 40, fontSize * 1.4);
-        y = contentArea.y + 70;
-        afterLines.forEach(line => {
-          ctx.fillText(line, width / 2 + 20, y);
-          y += fontSize * 1.4;
-        });
-      } else if (template === 'question') {
-        const fontSize = Math.min(width, height) * 0.045;
-        ctx.font = `600 ${fontSize}px system-ui`;
-        const lines = wrapText(ctx, content, contentArea.width, fontSize * 1.3);
-        const totalHeight = lines.length * fontSize * 1.3;
-        let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
-        ctx.fillStyle = config.text;
-        lines.forEach(line => {
-          ctx.fillText(line, contentArea.x, y);
-          y += fontSize * 1.3;
-        });
-        // Question mark accent
-        ctx.fillStyle = config.accent;
-        ctx.globalAlpha = 0.15;
-        ctx.font = `900 ${height * 0.6}px system-ui`;
-        ctx.fillText('?', width - height * 0.35, height * 0.7);
-        ctx.globalAlpha = 1;
+
+        const link = document.createElement('a');
+        link.download = `moonboots-${template}-${platform}-${timestamp}.png`;
+        link.href = slideData;
+        link.click();
       }
-
-      // Footer
-      ctx.fillStyle = config.accent;
-      ctx.font = '400 22px system-ui, -apple-system, sans-serif';
-      ctx.fillText('moonbootsconsultancy.net', padding, height - padding - 10);
-
-      // Download
-      const link = document.createElement('a');
-      link.download = `moonboots-${template}-${platform}-${Date.now()}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
     } catch (err) {
       console.error('Download error:', err);
     } finally {
@@ -1110,18 +1175,35 @@ const GraphicsImageMaker = () => {
         </div>
       </div>
 
+      {/* Carousel Title Input (for tips carousel) */}
+      {template === 'tips' && (
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-2">Cover Slide Title</label>
+          <input
+            type="text"
+            value={carouselTitle}
+            onChange={(e) => setCarouselTitle(e.target.value)}
+            placeholder="e.g., 5 AI strategies you need to know"
+            className="w-full px-4 py-3 bg-slate-800/30 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 transition-all"
+          />
+        </div>
+      )}
+
       {/* Content Input */}
       <div>
         <label className="block text-sm font-medium text-slate-300 mb-2">
-          {template === 'stat' ? 'Statistic' : template === 'before-after' ? 'Before' : 'Content'}
+          {template === 'stat' ? 'Statistic' : template === 'before-after' ? 'Before' : template === 'tips' ? 'Tips (one per line)' : 'Content'}
         </label>
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder={getPlaceholder()}
           className="w-full px-4 py-3 bg-slate-800/30 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none transition-all"
-          rows={template === 'tips' ? 5 : 3}
+          rows={template === 'tips' ? 6 : 3}
         />
+        {template === 'tips' && parsedTips.length > 0 && (
+          <p className="text-xs text-slate-500 mt-2">{parsedTips.length} tip{parsedTips.length !== 1 ? 's' : ''} detected → {parsedTips.length + 1} slides total (cover + tips)</p>
+        )}
       </div>
 
       {/* Secondary Content Input */}
@@ -1142,65 +1224,128 @@ const GraphicsImageMaker = () => {
 
       {/* Preview */}
       <div>
-        <label className="block text-sm font-medium text-slate-300 mb-3">Preview</label>
-        <div
-          className={`mx-auto ${s.bg} rounded-xl p-6 flex flex-col justify-between overflow-hidden`}
-          style={{
-            aspectRatio: `${aspectRatio}`,
-            maxWidth: aspectRatio > 1 ? '100%' : '320px'
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <svg width="20" height="20" viewBox="0 0 24 24" className={style === 'light' ? 'text-slate-900' : 'text-white'}>
-              <circle cx="12" cy="12" r="10" fill="currentColor"/>
-              <circle cx="16" cy="10" r="8" fill={style === 'light' ? '#ffffff' : (config.gradient ? config.gradient[0] : '#0f172a')}/>
-            </svg>
-            <span className={`text-xs font-semibold tracking-tight ${s.text}`}>moonboots</span>
-          </div>
+        <label className="block text-sm font-medium text-slate-300 mb-3">
+          Preview {template === 'tips' && totalSlides > 1 && `(Slide ${currentSlide + 1} of ${totalSlides})`}
+        </label>
 
-          <div className="flex-1 flex items-center py-4">
-            {template === 'quote' && (
-              <p className={`text-base font-light leading-relaxed ${s.text}`}>{content || "Your quote here..."}</p>
-            )}
-            {template === 'tips' && (
-              <div className="space-y-2 w-full">
-                {(content || "1. First tip\n2. Second tip\n3. Third tip").split('\n').filter(t => t.trim()).slice(0, 4).map((tip, i) => (
-                  <div key={i} className="flex gap-2">
-                    <span className={`text-sm font-bold ${s.accent}`}>{i + 1}</span>
-                    <span className={`text-xs ${s.text}`}>{tip.replace(/^\d+\.\s*/, '')}</span>
-                  </div>
+        {/* Carousel Preview with Navigation */}
+        {template === 'tips' && totalSlides > 1 ? (
+          <div className="space-y-3">
+            <div className="relative">
+              <div
+                className={`mx-auto ${s.bg} rounded-xl p-6 flex flex-col justify-between overflow-hidden`}
+                style={{ aspectRatio: `${aspectRatio}`, maxWidth: aspectRatio > 1 ? '100%' : '320px' }}
+              >
+                <div className="flex items-center gap-2">
+                  <svg width="20" height="20" viewBox="0 0 24 24" className={style === 'light' ? 'text-slate-900' : 'text-white'}>
+                    <circle cx="12" cy="12" r="10" fill="currentColor"/>
+                    <circle cx="16" cy="10" r="8" fill={style === 'light' ? '#ffffff' : (config.gradient ? config.gradient[0] : '#0f172a')}/>
+                  </svg>
+                  <span className={`text-xs font-semibold tracking-tight ${s.text}`}>moonboots</span>
+                </div>
+
+                <div className="flex-1 flex items-center py-4">
+                  {currentSlide === 0 ? (
+                    // Cover slide preview
+                    <div className="w-full">
+                      <p className={`text-xl font-bold leading-snug ${s.text}`}>{carouselTitle || "Your carousel title..."}</p>
+                      <p className={`text-xs mt-4 ${s.accent}`}>Swipe for tips →</p>
+                    </div>
+                  ) : (
+                    // Tip slide preview
+                    <div className="w-full relative">
+                      <span className={`absolute -right-2 top-0 text-6xl font-black opacity-10 ${s.text}`}>{currentSlide}</span>
+                      <p className={`text-[10px] font-semibold mb-2 ${s.accent}`}>TIP {currentSlide}</p>
+                      <p className={`text-sm leading-relaxed ${s.text}`}>{parsedTips[currentSlide - 1] || "Tip content..."}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className={`text-[10px] ${s.accent}`}>moonbootsconsultancy.net</div>
+              </div>
+            </div>
+
+            {/* Slide Navigation */}
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={() => setCurrentSlide(Math.max(0, currentSlide - 1))}
+                disabled={currentSlide === 0}
+                className="p-2 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <div className="flex gap-1.5">
+                {Array.from({ length: totalSlides }).map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setCurrentSlide(i)}
+                    className={`w-2 h-2 rounded-full transition-all ${
+                      i === currentSlide ? 'bg-violet-500 w-4' : 'bg-slate-600 hover:bg-slate-500'
+                    }`}
+                  />
                 ))}
               </div>
-            )}
-            {template === 'stat' && (
-              <div>
-                <div className={`text-4xl font-extrabold ${s.text}`}>{content || "73%"}</div>
-                <div className={`text-xs mt-1 ${s.accent}`}>{secondaryContent || "of companies fail..."}</div>
-              </div>
-            )}
-            {template === 'before-after' && (
-              <div className="flex w-full gap-3">
-                <div className="flex-1">
-                  <div className={`text-[10px] font-semibold mb-1 ${s.accent}`}>BEFORE</div>
-                  <div className={`text-xs ${s.text}`}>{content || "Old way..."}</div>
-                </div>
-                <div className={`w-px ${style === 'light' ? 'bg-slate-300' : 'bg-slate-600'}`} />
-                <div className="flex-1">
-                  <div className={`text-[10px] font-semibold mb-1 ${s.accent}`}>AFTER</div>
-                  <div className={`text-xs ${s.text}`}>{secondaryContent || "New way..."}</div>
-                </div>
-              </div>
-            )}
-            {template === 'question' && (
-              <div className="relative w-full">
-                <p className={`text-lg font-semibold leading-snug ${s.text}`}>{content || "What if you could...?"}</p>
-                <span className={`absolute -right-2 -bottom-4 text-6xl font-black opacity-10 ${s.text}`}>?</span>
-              </div>
-            )}
+              <button
+                onClick={() => setCurrentSlide(Math.min(totalSlides - 1, currentSlide + 1))}
+                disabled={currentSlide === totalSlides - 1}
+                className="p-2 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
+        ) : (
+          // Single slide preview
+          <div
+            className={`mx-auto ${s.bg} rounded-xl p-6 flex flex-col justify-between overflow-hidden`}
+            style={{ aspectRatio: `${aspectRatio}`, maxWidth: aspectRatio > 1 ? '100%' : '320px' }}
+          >
+            <div className="flex items-center gap-2">
+              <svg width="20" height="20" viewBox="0 0 24 24" className={style === 'light' ? 'text-slate-900' : 'text-white'}>
+                <circle cx="12" cy="12" r="10" fill="currentColor"/>
+                <circle cx="16" cy="10" r="8" fill={style === 'light' ? '#ffffff' : (config.gradient ? config.gradient[0] : '#0f172a')}/>
+              </svg>
+              <span className={`text-xs font-semibold tracking-tight ${s.text}`}>moonboots</span>
+            </div>
 
-          <div className={`text-[10px] ${s.accent}`}>moonbootsconsultancy.net</div>
-        </div>
+            <div className="flex-1 flex items-center py-4">
+              {template === 'quote' && (
+                <p className={`text-base font-light leading-relaxed ${s.text}`}>{content || "Your quote here..."}</p>
+              )}
+              {template === 'stat' && (
+                <div>
+                  <div className={`text-4xl font-extrabold ${s.text}`}>{content || "73%"}</div>
+                  <div className={`text-xs mt-1 ${s.accent}`}>{secondaryContent || "of companies fail..."}</div>
+                </div>
+              )}
+              {template === 'before-after' && (
+                <div className="flex w-full gap-3">
+                  <div className="flex-1">
+                    <div className={`text-[10px] font-semibold mb-1 ${s.accent}`}>BEFORE</div>
+                    <div className={`text-xs ${s.text}`}>{content || "Old way..."}</div>
+                  </div>
+                  <div className={`w-px ${style === 'light' ? 'bg-slate-300' : 'bg-slate-600'}`} />
+                  <div className="flex-1">
+                    <div className={`text-[10px] font-semibold mb-1 ${s.accent}`}>AFTER</div>
+                    <div className={`text-xs ${s.text}`}>{secondaryContent || "New way..."}</div>
+                  </div>
+                </div>
+              )}
+              {template === 'question' && (
+                <div className="relative w-full">
+                  <p className={`text-lg font-semibold leading-snug ${s.text}`}>{content || "What if you could...?"}</p>
+                  <span className={`absolute -right-2 -bottom-4 text-6xl font-black opacity-10 ${s.text}`}>?</span>
+                </div>
+              )}
+            </div>
+
+            <div className={`text-[10px] ${s.accent}`}>moonbootsconsultancy.net</div>
+          </div>
+        )}
       </div>
 
       {/* Download Button */}
@@ -1215,19 +1360,23 @@ const GraphicsImageMaker = () => {
               <div className="absolute inset-0 border-2 border-white/30 rounded-full" />
               <div className="absolute inset-0 border-2 border-white border-t-transparent rounded-full animate-spin" />
             </div>
-            Generating...
+            {template === 'tips' && totalSlides > 1 ? `Generating ${totalSlides} slides...` : 'Generating...'}
           </>
         ) : (
           <>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            Download {selectedPlatform.name} Image
+            {template === 'tips' && totalSlides > 1
+              ? `Download ${totalSlides} Carousel Slides`
+              : `Download ${selectedPlatform.name} Image`}
           </>
         )}
       </button>
       <p className="text-xs text-slate-500 text-center">
-        Downloads as {selectedPlatform.width}x{selectedPlatform.height} PNG ({selectedTemplate.name} for {selectedPlatform.name})
+        {template === 'tips' && totalSlides > 1
+          ? `Downloads ${totalSlides} PNG files at ${selectedPlatform.width}x${selectedPlatform.height} (cover + ${parsedTips.length} tip slides)`
+          : `Downloads as ${selectedPlatform.width}x${selectedPlatform.height} PNG (${selectedTemplate.name} for ${selectedPlatform.name})`}
       </p>
     </div>
   );
