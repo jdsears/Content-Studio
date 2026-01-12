@@ -108,42 +108,52 @@ const instagramTemplates = [
 ];
 
 // Topic suggestions by pillar (for when no API key)
+// Topic suggestions aligned with funnel strategy:
+// AI, Web3, Transformation → moonbootsconsultancy.net
+// Community, Sport → moments.deepfabrik.com
 const topicSuggestions = {
   ai: [
-    "Why most AI strategies fail in the first year",
-    "The gap between 'AI curious' and 'AI ready' isn't technical",
+    "Why most AI strategies fail in the first year (and how to avoid it)",
+    "The gap between 'AI curious' and 'AI ready' isn't technical—it's strategic",
     "Three questions I ask every founder before we talk about AI",
     "Hot take: Most 'AI transformations' are just expensive spreadsheet upgrades",
     "The best AI implementations I've seen all started the same way",
     "Why your AI pilot succeeded but your rollout failed",
+    "Agentic AI is coming. Is your business ready to let go of control?",
+    "The real cost of waiting another year to figure out AI",
   ],
   web3: [
     "Stop calling it Web3. Start calling it what it is: infrastructure for trust",
     "Decentralisation isn't about removing control—it's about distributing trust",
-    "The next wave of Web3 won't look like the last one",
-    "Why tokenomics matter less than you think",
+    "The next wave of Web3 won't look like the last one (and that's good)",
+    "Why tokenomics matter less than you think (and what matters more)",
     "The infrastructure layer nobody's talking about",
+    "Web3 for grown-ups: What actually works vs. what's just hype",
   ],
   community: [
     "Community isn't a feature. It's the product",
     "The creator economy's dirty secret: most creators don't own their audience",
-    "Why engagement metrics are lying to you",
-    "Building Moments taught me something: creators don't want more tools",
-    "The difference between an audience and a community",
+    "Why engagement metrics are lying to you about your community",
+    "Creators don't want more tools. They want direct relationships with fans",
+    "The difference between an audience and a community (and why it matters)",
+    "Your followers aren't yours. Here's how to change that",
+    "The hidden cost of building your audience on rented land",
   ],
   transformation: [
     "The best technology decisions weren't about technology at all",
     "Digital transformation is 20% technology, 80% change management",
     "Why your transformation roadmap is already outdated",
-    "The hidden cost of not transforming",
+    "The hidden cost of standing still while competitors transform",
     "Three signs your transformation is actually working",
+    "Why I tell founders to slow down before speeding up on transformation",
   ],
   sport: [
-    "What football taught me about building teams",
-    "Athletes have millions of followers but don't own the relationship",
-    "The future of fan engagement isn't about more content",
-    "Why sports organisations are 10 years behind on technology",
-    "Coaching U12s football is the best strategy session of my week",
+    "What coaching U12 football taught me about building high-performing teams",
+    "Athletes have millions of followers but don't own a single relationship",
+    "The future of fan engagement isn't about more content—it's about ownership",
+    "Why sports organisations are 10 years behind on technology (and how to catch up)",
+    "Every athlete will need a direct-to-fan strategy. Here's why",
+    "The agent-athlete-brand relationship is broken. Technology can fix it",
   ],
 };
 

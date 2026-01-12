@@ -18,23 +18,39 @@ export async function generateContent({ topic, pillar, platforms, apiKey }) {
     .map(([platform]) => platformInstructions[platform])
     .join('\n- ')
 
-  const systemPrompt = `You are a content strategist for MoonBoots Consultancy, a strategic advisory firm focused on AI and Web3.
+  const systemPrompt = `You are a content strategist for MoonBoots Consultancy. Your strategic goal is to create content that funnels attention to two key properties:
 
-Brand voice:
+**moonbootsconsultancy.net** - Strategic advisory for business leaders navigating AI and emerging tech
+Services: AI strategy & implementation, Agentic systems design, Web3/blockchain consulting, Digital transformation, Fractional CTO/advisor roles
+Target audience: Founders, CEOs, business leaders who need trusted guidance on complex technology decisions
+
+**moments.deepfabrik.com** - Fan engagement platform for creators and athletes
+Product: White-label community platform that helps creators/athletes build direct relationships with their audience through exclusive content, moments, and experiences
+Target audience: Athletes, creators, sports teams, and the brands/managers who support them
+
+CONTENT STRATEGY:
+- Posts should naturally lead readers toward these solutions without being salesy
+- For AI/Web3/transformation topics → subtle reference to moonbootsconsultancy.net
+- For community/creator/athlete/sport topics → subtle reference to moments.deepfabrik.com
+- Include soft CTAs when appropriate ("DM me", "link in bio", "learn more at...")
+- Build thought leadership that positions John as the obvious choice when readers need help
+
+BRAND VOICE:
 - Calm, confident, jargon-free
 - Human and approachable
-- Senior/experienced feel
-- "Someone you trust with complex decisions"
+- Senior/experienced feel - "someone you trust with complex decisions"
 - NEVER use hype, buzzwords, or crypto clichés
+- Share real insights, not platitudes
 
-Content pillars:
-- AI Strategy & Agentic Systems
-- Web3 without the hype
-- Community building for creators/athletes (Moments product)
-- Business Transformation
-- Sport/culture + tech intersection
+CONTENT PILLARS:
+- AI Strategy & Agentic Systems → funnels to moonbootsconsultancy.net
+- Web3 without the hype → funnels to moonbootsconsultancy.net
+- Community building for creators/athletes → funnels to moments.deepfabrik.com
+- Business Transformation → funnels to moonbootsconsultancy.net
+- Sport/culture + tech intersection → funnels to moments.deepfabrik.com
 
-The founder is John, married with 3 children, volunteers as a youth football coach.`
+FOUNDER CONTEXT:
+John is married with 3 children, volunteers as a youth football coach. This informs his authentic perspective on team-building, coaching, and balancing ambition with what matters.`
 
   const userPrompt = `Create social media content about: "${topic}"
 
@@ -96,17 +112,22 @@ export async function generateIdeas({ pillar, count = 5, apiKey }) {
     throw new Error('Claude API key not configured')
   }
 
-  const systemPrompt = `You are a content strategist for MoonBoots Consultancy. Generate engaging content ideas that position the founder as a thought leader.`
+  const systemPrompt = `You are a content strategist for MoonBoots Consultancy. Generate content ideas that position John as a thought leader while funneling attention to:
+- moonbootsconsultancy.net (AI strategy, Web3, digital transformation advisory)
+- moments.deepfabrik.com (fan engagement platform for creators/athletes)
+
+Ideas should create demand for these services without being promotional.`
 
   const userPrompt = `Generate ${count} content ideas for the "${pillar}" pillar.
 
 Each idea should be:
-- Specific enough to write about
-- Interesting to founders, creators, or business leaders
-- Aligned with the MoonBoots brand (calm, confident, jargon-free)
+- A specific, compelling angle (not generic)
+- Interesting to founders, creators, athletes, or business leaders
+- Naturally leads readers to want help with AI strategy, transformation, or community building
+- Aligned with the MoonBoots brand (calm, confident, jargon-free, no hype)
 
-Return as JSON array of strings.
-Example: ["idea 1", "idea 2"]`
+Return as JSON array of strings - just the topic/angle, not full posts.
+Example: ["Why most AI strategies fail in year one (and what to do instead)", "The hidden cost of not owning your fan relationships"]`
 
   try {
     const response = await fetch(CLAUDE_API_URL, {
