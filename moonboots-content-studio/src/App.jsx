@@ -81,6 +81,46 @@ const instagramTemplates = [
   { id: 'question', name: 'Question Hook', description: 'Engaging question overlay', icon: '❓' },
 ];
 
+// Topic suggestions by pillar (for when no API key)
+const topicSuggestions = {
+  ai: [
+    "Why most AI strategies fail in the first year",
+    "The gap between 'AI curious' and 'AI ready' isn't technical",
+    "Three questions I ask every founder before we talk about AI",
+    "Hot take: Most 'AI transformations' are just expensive spreadsheet upgrades",
+    "The best AI implementations I've seen all started the same way",
+    "Why your AI pilot succeeded but your rollout failed",
+  ],
+  web3: [
+    "Stop calling it Web3. Start calling it what it is: infrastructure for trust",
+    "Decentralisation isn't about removing control—it's about distributing trust",
+    "The next wave of Web3 won't look like the last one",
+    "Why tokenomics matter less than you think",
+    "The infrastructure layer nobody's talking about",
+  ],
+  community: [
+    "Community isn't a feature. It's the product",
+    "The creator economy's dirty secret: most creators don't own their audience",
+    "Why engagement metrics are lying to you",
+    "Building Moments taught me something: creators don't want more tools",
+    "The difference between an audience and a community",
+  ],
+  transformation: [
+    "The best technology decisions weren't about technology at all",
+    "Digital transformation is 20% technology, 80% change management",
+    "Why your transformation roadmap is already outdated",
+    "The hidden cost of not transforming",
+    "Three signs your transformation is actually working",
+  ],
+  sport: [
+    "What football taught me about building teams",
+    "Athletes have millions of followers but don't own the relationship",
+    "The future of fan engagement isn't about more content",
+    "Why sports organisations are 10 years behind on technology",
+    "Coaching U12s football is the best strategy session of my week",
+  ],
+};
+
 // Content Generator with optimal timing - state lifted from parent
 const ContentGenerator = ({
   onGenerate,
@@ -101,7 +141,54 @@ const ContentGenerator = ({
   setInstagramTemplate,
 }) => {
   const [generating, setGenerating] = useState(false);
+  const [generatingTopic, setGeneratingTopic] = useState(false);
   const [error, setError] = useState(null);
+
+  const handleGenerateTopic = async () => {
+    setGeneratingTopic(true);
+    const pillarName = pillars.find(p => p.id === selectedPillar)?.name || 'AI Strategy';
+
+    try {
+      if (claudeApiKey) {
+        // Use Claude API to generate topic
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': claudeApiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 100,
+            messages: [{
+              role: 'user',
+              content: `Generate a single compelling social media post topic/hook for a thought leader in the "${pillarName}" space. The topic should be provocative, insightful, and conversation-starting. Return ONLY the topic text, nothing else. Keep it under 80 characters.`
+            }]
+          })
+        });
+
+        if (!response.ok) throw new Error('Failed to generate topic');
+        const data = await response.json();
+        setTopic(data.content[0].text.trim());
+      } else {
+        // Use mock suggestions
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const suggestions = topicSuggestions[selectedPillar] || topicSuggestions.ai;
+        const randomTopic = suggestions[Math.floor(Math.random() * suggestions.length)];
+        setTopic(randomTopic);
+      }
+    } catch (err) {
+      console.error('Topic generation error:', err);
+      // Fallback to mock on error
+      const suggestions = topicSuggestions[selectedPillar] || topicSuggestions.ai;
+      const randomTopic = suggestions[Math.floor(Math.random() * suggestions.length)];
+      setTopic(randomTopic);
+    } finally {
+      setGeneratingTopic(false);
+    }
+  };
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -182,7 +269,20 @@ const ContentGenerator = ({
       )}
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Topic or idea</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-sm text-slate-400">Topic or idea</label>
+          <button
+            onClick={handleGenerateTopic}
+            disabled={generatingTopic}
+            className="px-3 py-1 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {generatingTopic ? (
+              <><div className="w-3 h-3 border-2 border-slate-500 border-t-slate-300 rounded-full animate-spin" />Thinking...</>
+            ) : (
+              <>🎲 Suggest Topic</>
+            )}
+          </button>
+        </div>
         <textarea value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g., Why most AI strategies fail in the first year..." className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 resize-none" rows={3} />
       </div>
 
