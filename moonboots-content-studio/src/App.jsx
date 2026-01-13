@@ -289,6 +289,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
 
   const [generating, setGenerating] = useState(false);
   const [showScheduleOptions, setShowScheduleOptions] = useState(null);
+  const [expandedImage, setExpandedImage] = useState(null);
 
   // Helper to update lifted state
   const updateState = (updates) => {
@@ -628,13 +629,16 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
                           <span className="text-[10px] text-slate-500">{imgSettings.type === 'ai' ? 'AI generating...' : 'Creating...'}</span>
                         </div>
                       ) : generatedImages[platform] ? (
-                        <div className="relative group">
+                        <div className="relative group cursor-pointer" onClick={() => setExpandedImage(generatedImages[platform])}>
                           <img src={generatedImages[platform]} alt="Preview" className="w-32 h-32 object-cover rounded-lg" />
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
-                            <button onClick={() => handleRegenerateImage(platform, content)} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Regenerate">
+                            <button onClick={(e) => { e.stopPropagation(); setExpandedImage(generatedImages[platform]); }} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Expand">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); handleRegenerateImage(platform, content); }} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Regenerate">
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                             </button>
-                            <a href={generatedImages[platform]} download={`${platform}-image.png`} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Download">
+                            <a href={generatedImages[platform]} download={`${platform}-image.png`} onClick={(e) => e.stopPropagation()} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Download">
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                             </a>
                           </div>
@@ -650,6 +654,33 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Image expansion modal */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
+          onClick={() => setExpandedImage(null)}
+        >
+          <div className="relative max-w-5xl max-h-full">
+            <img src={expandedImage} alt="Expanded" className="max-w-full max-h-[90vh] rounded-lg shadow-2xl" />
+            <button
+              onClick={() => setExpandedImage(null)}
+              className="absolute top-4 right-4 p-2 bg-black/50 rounded-full hover:bg-black/70 text-white"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <a
+              href={expandedImage}
+              download="moonboots-image.png"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-4 right-4 px-4 py-2 bg-white text-slate-900 rounded-lg hover:bg-slate-100 text-sm font-medium flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              Download
+            </a>
+          </div>
         </div>
       )}
     </div>
