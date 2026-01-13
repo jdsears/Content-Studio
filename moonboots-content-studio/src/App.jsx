@@ -904,13 +904,13 @@ const InsightsDashboard = ({ performance }) => {
 };
 
 // Approval Queue with images
-const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage }) => {
+const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy }) => {
   const pending = posts.filter(p => p.status === 'pending');
   const approved = posts.filter(p => p.status === 'approved' || p.status === 'publishing' || p.status === 'published');
   const rejected = posts.filter(p => p.status === 'rejected');
   const [expandedImage, setExpandedImage] = useState(null);
 
-  const PostCard = ({ post, showActions = true }) => (
+  const PostCard = ({ post, showActions = true, showCopy = false }) => (
     <div className={`p-5 bg-slate-800/50 rounded-xl border ${post.status === 'pending' ? 'border-slate-700/50' : post.status === 'rejected' ? 'border-red-900/30' : 'border-green-900/30'}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3">
@@ -948,8 +948,9 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage }) => {
         )}
       </div>
 
-      {post.suggestedTime && <p className="text-xs text-blue-400 mb-2">Scheduled: {post.suggestedTime}</p>}
+      {post.suggestedTime && !post.scheduledFor && <p className="text-xs text-blue-400 mb-2">Suggested: {post.suggestedTime}</p>}
       {post.scheduledFor && <p className="text-xs text-blue-400 mb-2">Scheduled: {post.scheduledFor}</p>}
+      {post.approvedAt && <p className="text-xs text-green-400 mb-2">Approved: {new Date(post.approvedAt).toLocaleString()}</p>}
       {post.publishedAt && <p className="text-xs text-green-400 mb-2">Published: {new Date(post.publishedAt).toLocaleString()}</p>}
       {post.error && <p className="text-xs text-red-400 mb-2">Error: {post.error}</p>}
 
@@ -958,6 +959,19 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage }) => {
           <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">Approve</button>
           <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
           <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">Reject</button>
+        </div>
+      )}
+
+      {showCopy && post.status === 'approved' && (
+        <div className="flex items-center gap-2">
+          <button onClick={() => onCopy(post)} className="px-4 py-2 text-sm bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            Copy to Clipboard
+          </button>
+          <a href="https://app.publer.io" target="_blank" rel="noopener noreferrer" className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700 flex items-center gap-2">
+            Open Publer
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+          </a>
         </div>
       )}
     </div>
@@ -988,11 +1002,12 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage }) => {
         <div>
           <h3 className="text-sm font-medium text-slate-300 mb-4 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500"></span>
-            Approved & Published
+            Approved & Ready to Publish
             <span className="text-xs text-slate-500">({approved.length})</span>
           </h3>
+          <p className="text-xs text-slate-500 mb-4">Copy content and paste into Publer to publish</p>
           <div className="space-y-4">
-            {approved.map(post => <PostCard key={post.id} post={post} showActions={false} />)}
+            {approved.map(post => <PostCard key={post.id} post={post} showActions={false} showCopy={true} />)}
           </div>
         </div>
       )}
@@ -1427,40 +1442,28 @@ export default function ContentStudio() {
     }
   };
 
-  // Handle approve with Publer publishing
-  const handleApprove = async (id) => {
+  // Handle approve - marks post as approved for manual publishing
+  // Note: Direct Publer API calls from browser are blocked by CORS
+  // Users should copy content to Publer web interface or use Publer's browser extension
+  const handleApprove = (id) => {
     const post = posts.find(p => p.id === id);
     if (!post) return;
 
-    // Update status to publishing
-    setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'publishing' } : p));
+    setPosts(prev => prev.map(p => p.id === id ? {
+      ...p,
+      status: 'approved',
+      approvedAt: new Date().toISOString(),
+      scheduledFor: post.suggestedTime || null
+    } : p));
+  };
 
-    // Only publish to Publer for LinkedIn and Instagram (X is manual)
-    if (post.platform !== 'x' && settings.publerApiKey) {
-      try {
-        await publishToPubler(post);
-        setPosts(prev => prev.map(p => p.id === id ? {
-          ...p,
-          status: 'published',
-          publishedAt: new Date().toISOString()
-        } : p));
-      } catch (error) {
-        console.error('Failed to publish:', error);
-        // Revert to approved status on error
-        setPosts(prev => prev.map(p => p.id === id ? {
-          ...p,
-          status: 'approved',
-          error: error.message
-        } : p));
-        alert(`Failed to publish to Publer: ${error.message}`);
-      }
-    } else {
-      // For X or when no Publer key, just mark as approved
-      setPosts(prev => prev.map(p => p.id === id ? {
-        ...p,
-        status: 'approved',
-        scheduledFor: post.suggestedTime || new Date().toISOString()
-      } : p));
+  // Copy post content to clipboard for easy pasting into Publer
+  const handleCopyToClipboard = async (post) => {
+    try {
+      await navigator.clipboard.writeText(post.content);
+      alert('Content copied to clipboard! Paste into Publer to publish.');
+    } catch (error) {
+      console.error('Failed to copy:', error);
     }
   };
 
@@ -1492,7 +1495,7 @@ export default function ContentStudio() {
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
           {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} />}
+          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
