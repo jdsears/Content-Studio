@@ -235,39 +235,117 @@ export function generateQuestionImage({ question, platform = 'instagram', style 
 }
 
 /**
+ * Extract key content from a post for image generation
+ * Returns the most impactful part of the content
+ */
+function extractKeyContent(content) {
+  // Split into sentences/lines
+  const lines = content.split(/[.\n]+/).map(s => s.trim()).filter(s => s.length > 0);
+
+  // Find the hook/headline (usually first meaningful line)
+  let headline = lines[0] || content.substring(0, 80);
+
+  // If headline is too long, try to find a shorter impactful line
+  if (headline.length > 80) {
+    // Look for a shorter punchy line
+    const shortLine = lines.find(l => l.length >= 20 && l.length <= 80);
+    if (shortLine) headline = shortLine;
+    else headline = headline.substring(0, 77) + '...';
+  }
+
+  return headline;
+}
+
+/**
+ * Extract stat and brief context from content
+ */
+function extractStatContent(content, statMatch) {
+  const stat = statMatch[0];
+  const lines = content.split(/[.\n]+/).map(s => s.trim()).filter(s => s.length > 0);
+
+  // Find the line containing the stat
+  const statLine = lines.find(l => l.includes(stat)) || '';
+
+  // Get context - the sentence with the stat, cleaned up
+  let context = statLine.replace(stat, '').replace(/^[•\-\s]+/, '').trim();
+
+  // If context is too long or empty, try to get a better one
+  if (context.length > 100) {
+    context = context.substring(0, 97) + '...';
+  } else if (context.length < 10) {
+    // Use headline as context instead
+    context = extractKeyContent(content.replace(statLine, ''));
+  }
+
+  return { stat, context };
+}
+
+/**
  * Auto-generate an appropriate image based on content
  * Analyzes the text to determine the best template
  */
-export function autoGenerateImage({ content, platform = 'instagram', style = 'gradient' }) {
-  // Detect if content starts with a question
-  const isQuestion = content.trim().endsWith('?') ||
-                     content.toLowerCase().startsWith('what ') ||
-                     content.toLowerCase().startsWith('why ') ||
-                     content.toLowerCase().startsWith('how ') ||
-                     content.toLowerCase().startsWith('when ') ||
-                     content.toLowerCase().startsWith('who ');
+export function autoGenerateImage({ content, platform = 'instagram', style = 'gradient', template = 'auto' }) {
+  // If specific template requested, use it
+  if (template && template !== 'auto') {
+    switch (template) {
+      case 'quote':
+        return generateQuoteImage({
+          content: extractKeyContent(content),
+          platform,
+          style
+        });
+      case 'stat': {
+        const statMatch = content.match(/(\d+%|\d+x|\$\d+[KMB]?|\d+ out of \d+|\d+K|\d+M)/i);
+        if (statMatch) {
+          const { stat, context } = extractStatContent(content, statMatch);
+          return generateStatImage({ stat, context, platform, style: 'vibrant' });
+        }
+        // Fallback if no stat found
+        return generateQuoteImage({ content: extractKeyContent(content), platform, style });
+      }
+      case 'question':
+        return generateQuestionImage({
+          question: extractKeyContent(content),
+          platform,
+          style
+        });
+      default:
+        break;
+    }
+  }
+
+  // Auto-detect best template
+  // Detect if content starts with or contains a question
+  const firstLine = content.split(/[.\n]/)[0].trim();
+  const isQuestion = firstLine.endsWith('?') ||
+                     firstLine.toLowerCase().startsWith('what ') ||
+                     firstLine.toLowerCase().startsWith('why ') ||
+                     firstLine.toLowerCase().startsWith('how ') ||
+                     firstLine.toLowerCase().startsWith('when ') ||
+                     firstLine.toLowerCase().startsWith('who ');
 
   // Detect if content has a stat/number
-  const statMatch = content.match(/(\d+%|\d+x|\$\d+[KMB]?|\d+ out of \d+)/i);
+  const statMatch = content.match(/(\d+%|\d+x|\$\d+[KMB]?|\d+ out of \d+|\d+K|\d+M)/i);
 
   if (statMatch) {
-    // Extract stat and context
-    const stat = statMatch[0];
-    const context = content.replace(stat, '').trim();
+    const { stat, context } = extractStatContent(content, statMatch);
     return generateStatImage({ stat, context, platform, style: 'vibrant' });
   }
 
   if (isQuestion) {
-    return generateQuestionImage({ question: content, platform, style });
+    return generateQuestionImage({
+      question: extractKeyContent(content),
+      platform,
+      style
+    });
   }
 
-  // Default to quote card
-  // Truncate very long content for the image
-  const truncatedContent = content.length > 200
-    ? content.substring(0, 197) + '...'
-    : content;
-
-  return generateQuoteImage({ content: truncatedContent, platform, style });
+  // Default to quote card with just the headline
+  return generateQuoteImage({
+    content: extractKeyContent(content),
+    platform,
+    style
+  });
 }
 
 /**
