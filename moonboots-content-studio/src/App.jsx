@@ -706,83 +706,101 @@ const ContentGenerator = ({
                   <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
                 </div>
 
-                {/* Image Preview with Enlarged View */}
-                <div className="flex-shrink-0 flex gap-3">
-                  {/* Thumbnail */}
-                  {(generatedImages[platform] || generatingImages[platform]) && (
-                    <div>
-                      {generatingImages[platform] ? (
-                        <div className="w-24 h-32 bg-slate-800/50 rounded-lg flex flex-col items-center justify-center gap-2">
-                          <div className={`w-5 h-5 border-2 rounded-full animate-spin ${imageSettings[platform]?.mode === 'ai' ? 'border-emerald-500/30 border-t-emerald-500' : 'border-violet-500/30 border-t-violet-500'}`} />
-                          <span className="text-[9px] text-slate-500">
-                            {imageSettings[platform]?.mode === 'ai' ? 'AI...' : 'Creating...'}
-                          </span>
-                        </div>
-                      ) : (
-                        <div
-                          className="relative cursor-pointer"
-                          onMouseEnter={() => setPreviewImage(platform)}
-                          onMouseLeave={() => setPreviewImage(null)}
-                        >
-                          <img
-                            src={generatedImages[platform]}
-                            alt={`${platform} preview`}
-                            className="w-24 h-auto rounded-lg border border-slate-700/50 hover:border-violet-500/50 transition-colors"
-                          />
-                          <div className="absolute bottom-1 right-1 flex gap-0.5">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleGenerateImage(platform); }}
-                              className="p-1 bg-black/70 rounded text-white text-[9px] hover:bg-black/90"
-                              title="Regenerate"
-                            >
-                              ↻
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setGeneratedImages(prev => ({ ...prev, [platform]: null })); }}
-                              className="p-1 bg-black/70 rounded text-white text-[9px] hover:bg-black/90"
-                              title="Remove"
-                            >
-                              ✕
-                            </button>
-                            <a
-                              href={generatedImages[platform]}
-                              download={`moonboots-${platform}-${Date.now()}.png`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-1 bg-black/70 rounded text-white text-[9px] hover:bg-black/90"
-                              title="Download"
-                            >
-                              ↓
-                            </a>
-                          </div>
-                        </div>
-                      )}
+                {/* Image Preview */}
+                <div className="flex-shrink-0">
+                  {generatingImages[platform] ? (
+                    <div className="w-28 h-36 bg-slate-800/50 rounded-lg flex flex-col items-center justify-center gap-2">
+                      <div className={`w-5 h-5 border-2 rounded-full animate-spin ${imageSettings[platform]?.mode === 'ai' ? 'border-emerald-500/30 border-t-emerald-500' : 'border-violet-500/30 border-t-violet-500'}`} />
+                      <span className="text-[9px] text-slate-500">
+                        {imageSettings[platform]?.mode === 'ai' ? 'AI generating...' : 'Creating...'}
+                      </span>
                     </div>
-                  )}
-
-                  {/* Enlarged Preview */}
-                  {previewImage === platform && generatedImages[platform] && (
-                    <div className="w-64 flex-shrink-0 animate-in fade-in duration-200">
+                  ) : generatedImages[platform] ? (
+                    <div className="relative">
+                      {/* Clickable thumbnail that opens modal */}
                       <img
                         src={generatedImages[platform]}
-                        alt={`${platform} enlarged preview`}
-                        className="w-full h-auto rounded-lg border border-slate-600 shadow-xl"
+                        alt={`${platform} preview`}
+                        className="w-28 h-auto rounded-lg border border-slate-700/50 hover:border-violet-500/50 transition-colors cursor-pointer"
+                        onClick={() => setPreviewImage(platform)}
                       />
+                      {/* Controls below image */}
+                      <div className="flex justify-center gap-1 mt-2">
+                        <button
+                          onClick={() => handleGenerateImage(platform, imageSettings[platform])}
+                          className="px-2 py-1 bg-slate-800 rounded text-white text-[10px] hover:bg-slate-700 border border-slate-700"
+                          title="Regenerate"
+                        >
+                          ↻ Regen
+                        </button>
+                        <button
+                          onClick={() => setGeneratedImages(prev => ({ ...prev, [platform]: null }))}
+                          className="px-2 py-1 bg-slate-800 rounded text-white text-[10px] hover:bg-slate-700 border border-slate-700"
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                        <a
+                          href={generatedImages[platform]}
+                          download={`moonboots-${platform}-${Date.now()}.png`}
+                          className="px-2 py-1 bg-slate-800 rounded text-white text-[10px] hover:bg-slate-700 border border-slate-700"
+                          title="Download"
+                        >
+                          ↓
+                        </a>
+                      </div>
                     </div>
-                  )}
-
-                  {/* Generate Image Button (if no image and auto is off) */}
-                  {!generatedImages[platform] && !generatingImages[platform] && !autoGenerateImages && (
+                  ) : !autoGenerateImages ? (
                     <button
-                      onClick={() => handleGenerateImage(platform)}
-                      className="px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700 h-fit"
+                      onClick={() => handleGenerateImage(platform, imageSettings[platform])}
+                      className="px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700"
                     >
                       + Generate Image
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>
           ))}
+
+          {/* Image Preview Modal */}
+          {previewImage && generatedImages[previewImage] && (
+            <div
+              className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8"
+              onClick={() => setPreviewImage(null)}
+            >
+              <div className="relative max-w-2xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                <img
+                  src={generatedImages[previewImage]}
+                  alt="Preview"
+                  className="max-w-full max-h-[85vh] rounded-lg shadow-2xl"
+                />
+                <button
+                  onClick={() => setPreviewImage(null)}
+                  className="absolute -top-3 -right-3 w-8 h-8 bg-white text-black rounded-full flex items-center justify-center text-lg font-bold hover:bg-slate-200"
+                >
+                  ✕
+                </button>
+                <div className="flex justify-center gap-2 mt-4">
+                  <button
+                    onClick={() => {
+                      handleGenerateImage(previewImage, imageSettings[previewImage]);
+                    }}
+                    className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm"
+                  >
+                    ↻ Regenerate
+                  </button>
+                  <a
+                    href={generatedImages[previewImage]}
+                    download={`moonboots-${previewImage}-${Date.now()}.png`}
+                    className="px-4 py-2 bg-white text-slate-900 rounded-lg hover:bg-slate-100 text-sm"
+                  >
+                    ↓ Download
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
