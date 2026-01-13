@@ -906,56 +906,110 @@ const InsightsDashboard = ({ performance }) => {
 // Approval Queue with images
 const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage }) => {
   const pending = posts.filter(p => p.status === 'pending');
+  const approved = posts.filter(p => p.status === 'approved' || p.status === 'publishing' || p.status === 'published');
+  const rejected = posts.filter(p => p.status === 'rejected');
   const [expandedImage, setExpandedImage] = useState(null);
 
-  if (pending.length === 0) return <div className="text-center py-12"><div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 flex items-center justify-center text-2xl">✓</div><p className="text-slate-400">No posts awaiting approval</p></div>;
+  const PostCard = ({ post, showActions = true }) => (
+    <div className={`p-5 bg-slate-800/50 rounded-xl border ${post.status === 'pending' ? 'border-slate-700/50' : post.status === 'rejected' ? 'border-red-900/30' : 'border-green-900/30'}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <PlatformIcon platform={post.platform} className="w-5 h-5 text-slate-400" />
+          <span className="text-xs px-2 py-1 bg-slate-700/50 rounded-full text-slate-300">{post.pillar}</span>
+          {post.platform === 'x' && <span className="text-xs px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded-full">Manual</span>}
+        </div>
+        <StatusBadge status={post.status} />
+      </div>
 
-  return (
-    <div className="space-y-4">
-      {pending.map(post => (
-        <div key={post.id} className="p-5 bg-slate-800/50 rounded-xl border border-slate-700/50">
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <PlatformIcon platform={post.platform} className="w-5 h-5 text-slate-400" />
-              <span className="text-xs px-2 py-1 bg-slate-700/50 rounded-full text-slate-300">{post.pillar}</span>
-              {post.platform === 'x' && <span className="text-xs px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded-full">Manual</span>}
-            </div>
-            <StatusBadge status={post.status} />
-          </div>
+      <div className="flex gap-4 mb-4">
+        <p className="text-slate-200 text-sm whitespace-pre-wrap flex-1">{post.content}</p>
 
-          <div className="flex gap-4 mb-4">
-            <p className="text-slate-200 text-sm whitespace-pre-wrap flex-1">{post.content}</p>
-
-            {/* Image preview in queue */}
-            {post.image && (
-              <div className="flex-shrink-0">
-                <div
-                  className="relative cursor-pointer group"
-                  onClick={() => setExpandedImage(post.image)}
-                >
-                  <img src={post.image} alt="Post image" className="w-24 h-24 object-cover rounded-lg" />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                    <span className="text-xs text-white">Click to expand</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => onRemoveImage(post.id)}
-                  className="mt-1 text-xs text-slate-500 hover:text-red-400 w-full text-center"
-                >
-                  Remove image
-                </button>
+        {/* Image preview in queue */}
+        {post.image && (
+          <div className="flex-shrink-0">
+            <div
+              className="relative cursor-pointer group"
+              onClick={() => setExpandedImage(post.image)}
+            >
+              <img src={post.image} alt="Post image" className="w-24 h-24 object-cover rounded-lg" />
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                <span className="text-xs text-white">Click to expand</span>
               </div>
+            </div>
+            {showActions && (
+              <button
+                onClick={() => onRemoveImage(post.id)}
+                className="mt-1 text-xs text-slate-500 hover:text-red-400 w-full text-center"
+              >
+                Remove image
+              </button>
             )}
           </div>
+        )}
+      </div>
 
-          {post.suggestedTime && <p className="text-xs text-blue-400 mb-4">Optimal time: {post.suggestedTime}</p>}
-          <div className="flex items-center gap-2">
-            <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">Approve</button>
-            <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
-            <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">Reject</button>
+      {post.suggestedTime && <p className="text-xs text-blue-400 mb-2">Scheduled: {post.suggestedTime}</p>}
+      {post.scheduledFor && <p className="text-xs text-blue-400 mb-2">Scheduled: {post.scheduledFor}</p>}
+      {post.publishedAt && <p className="text-xs text-green-400 mb-2">Published: {new Date(post.publishedAt).toLocaleString()}</p>}
+      {post.error && <p className="text-xs text-red-400 mb-2">Error: {post.error}</p>}
+
+      {showActions && post.status === 'pending' && (
+        <div className="flex items-center gap-2">
+          <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">Approve</button>
+          <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
+          <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">Reject</button>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-8">
+      {/* Pending Section */}
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+          Awaiting Approval
+          {pending.length > 0 && <span className="text-xs text-slate-500">({pending.length})</span>}
+        </h3>
+        {pending.length === 0 ? (
+          <div className="text-center py-8 bg-slate-800/30 rounded-xl border border-slate-700/30">
+            <p className="text-slate-500 text-sm">No posts awaiting approval</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {pending.map(post => <PostCard key={post.id} post={post} />)}
+          </div>
+        )}
+      </div>
+
+      {/* Approved/Published Section */}
+      {approved.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-slate-300 mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+            Approved & Published
+            <span className="text-xs text-slate-500">({approved.length})</span>
+          </h3>
+          <div className="space-y-4">
+            {approved.map(post => <PostCard key={post.id} post={post} showActions={false} />)}
           </div>
         </div>
-      ))}
+      )}
+
+      {/* Rejected Section */}
+      {rejected.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-slate-300 mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+            Rejected
+            <span className="text-xs text-slate-500">({rejected.length})</span>
+          </h3>
+          <div className="space-y-4">
+            {rejected.map(post => <PostCard key={post.id} post={post} showActions={false} />)}
+          </div>
+        </div>
+      )}
 
       {/* Image modal */}
       {expandedImage && (
