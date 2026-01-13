@@ -269,6 +269,75 @@ Only include the platforms requested. Make each post unique and tailored to that
   }
 });
 
+// Topic suggestion endpoint
+app.post('/api/suggest-topic', async (req, res) => {
+  const { apiKey, pillar } = req.body;
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'Claude API key is required' });
+  }
+
+  const moonbootsContext = `moonboots labs is a consultancy and venture studio focused on:
+
+1. COMMUNITY BUILDING INFRASTRUCTURE (moments) - Tools and strategies for building engaged communities, fan engagement, direct-to-fan relationships
+2. WEB3 INFRASTRUCTURE (deepfabrik) - Blockchain solutions, tokenization platforms, decentralized applications
+3. AGENTIC AI SOLUTIONS & CONSULTANCY - AI agents, automation, enterprise AI strategy, practical AI implementation
+4. WEB3 STRATEGY & TOKENISED INVESTMENT - Token economics, crypto investment strategies, DeFi
+5. VENTURE CAPITAL & REAL ESTATE - Investment in startups, tokenized real estate, alternative assets
+
+The founder's perspective: Practical, experience-driven insights from working with both startups and enterprises. Skeptical of hype, focused on what actually works. Values community over vanity metrics, substance over buzzwords.`;
+
+  const prompt = `${moonbootsContext}
+
+Based on the content pillar "${pillar || 'AI Strategy'}", suggest ONE compelling, specific topic for a social media post.
+
+The topic should:
+- Be thought-provoking and slightly contrarian
+- Draw from real-world experience
+- Be specific enough to write about (not generic)
+- Appeal to founders, executives, and tech leaders
+- Not be clickbait - genuine insight
+
+Return ONLY the topic text, nothing else. No quotes, no explanation. Just the topic idea in 1-2 sentences.`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 200,
+        messages: [
+          { role: 'user', content: prompt }
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('Claude API error:', data);
+      return res.status(response.status).json({
+        error: data.error?.message || 'Failed to suggest topic',
+      });
+    }
+
+    const topic = data.content?.[0]?.text?.trim();
+    if (!topic) {
+      return res.status(500).json({ error: 'No topic generated' });
+    }
+
+    res.json({ success: true, topic });
+  } catch (error) {
+    console.error('Topic suggestion failed:', error);
+    res.status(500).json({ error: error.message || 'Failed to connect to Claude API' });
+  }
+});
+
 // OpenAI DALL-E image generation proxy
 app.post('/api/generate-image', async (req, res) => {
   const { apiKey, prompt, platform } = req.body;

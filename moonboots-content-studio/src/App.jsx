@@ -521,7 +521,43 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Topic or idea</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-sm text-slate-400">Topic or idea</label>
+          <button
+            onClick={async () => {
+              if (!settings.claudeApiKey) {
+                alert('Please add your Claude API key in Settings to use topic suggestions');
+                return;
+              }
+              setGenerating(true);
+              try {
+                const response = await fetch('/api/suggest-topic', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    apiKey: settings.claudeApiKey,
+                    pillar: pillars.find(p => p.id === selectedPillar)?.name,
+                  }),
+                });
+                const data = await response.json();
+                if (data.success && data.topic) {
+                  setTopic(data.topic);
+                } else {
+                  alert(data.error || 'Failed to suggest topic');
+                }
+              } catch (error) {
+                console.error('Topic suggestion failed:', error);
+                alert('Failed to suggest topic');
+              }
+              setGenerating(false);
+            }}
+            disabled={generating}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 disabled:opacity-50 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+            {generating ? 'Thinking...' : 'Suggest Topic'}
+          </button>
+        </div>
         <textarea value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g., Why most AI strategies fail in the first year..." className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 resize-none" rows={3} />
       </div>
 
