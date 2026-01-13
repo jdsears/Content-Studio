@@ -50,10 +50,11 @@ const StatusBadge = ({ status }) => {
   const styles = {
     pending: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
     approved: 'bg-green-500/20 text-green-400 border-green-500/30',
+    publishing: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
     published: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
     rejected: 'bg-red-500/20 text-red-400 border-red-500/30',
   };
-  return <span className={`px-2 py-1 text-xs rounded-full border ${styles[status]}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span>;
+  return <span className={`px-2 py-1 text-xs rounded-full border ${styles[status] || styles.pending}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span>;
 };
 
 const TabButton = ({ active, onClick, children, count }) => (
@@ -1310,6 +1311,105 @@ export default function ContentStudio() {
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, image: null } : p));
   };
 
+  // Publish to Publer API
+  const publishToPubler = async (post) => {
+    if (!settings.publerApiKey) {
+      throw new Error('Publer API key not configured');
+    }
+
+    // Map platform names to Publer social account types
+    const platformMap = {
+      linkedin: 'linkedin',
+      instagram: 'instagram',
+      x: 'twitter', // X was Twitter
+    };
+
+    const publerPlatform = platformMap[post.platform];
+    if (!publerPlatform) {
+      throw new Error(`Unsupported platform: ${post.platform}`);
+    }
+
+    // Build the post payload
+    const payload = {
+      text: post.content,
+      platforms: [publerPlatform],
+    };
+
+    // Add image if present (as URL or base64)
+    if (post.image) {
+      // If it's a base64 image, we need to upload it first or include it
+      if (post.image.startsWith('data:')) {
+        payload.media = [{ url: post.image }];
+      } else {
+        payload.media = [{ url: post.image }];
+      }
+    }
+
+    // Add scheduling if specified
+    if (post.scheduledFor) {
+      // Convert to ISO format for Publer
+      payload.scheduled_at = new Date(post.scheduledFor).toISOString();
+    }
+
+    try {
+      const response = await fetch('https://publer.io/api/v1/posts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${settings.publerApiKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to publish to Publer');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Publer publish failed:', error);
+      throw error;
+    }
+  };
+
+  // Handle approve with Publer publishing
+  const handleApprove = async (id) => {
+    const post = posts.find(p => p.id === id);
+    if (!post) return;
+
+    // Update status to publishing
+    setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'publishing' } : p));
+
+    // Only publish to Publer for LinkedIn and Instagram (X is manual)
+    if (post.platform !== 'x' && settings.publerApiKey) {
+      try {
+        await publishToPubler(post);
+        setPosts(prev => prev.map(p => p.id === id ? {
+          ...p,
+          status: 'published',
+          publishedAt: new Date().toISOString()
+        } : p));
+      } catch (error) {
+        console.error('Failed to publish:', error);
+        // Revert to approved status on error
+        setPosts(prev => prev.map(p => p.id === id ? {
+          ...p,
+          status: 'approved',
+          error: error.message
+        } : p));
+        alert(`Failed to publish to Publer: ${error.message}`);
+      }
+    } else {
+      // For X or when no Publer key, just mark as approved
+      setPosts(prev => prev.map(p => p.id === id ? {
+        ...p,
+        status: 'approved',
+        scheduledFor: post.suggestedTime || new Date().toISOString()
+      } : p));
+    }
+  };
+
   const pendingCount = posts.filter(p => p.status === 'pending').length;
 
   return (
@@ -1338,7 +1438,7 @@ export default function ContentStudio() {
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
           {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved', scheduledFor: '2025-01-15 09:00' } : p))} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} />}
+          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
