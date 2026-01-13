@@ -33,24 +33,13 @@ const industryBenchmarks = {
 };
 
 const Logo = () => (
-  <div className="flex items-center gap-3">
-    <div className="relative">
-      <svg width="32" height="32" viewBox="0 0 32 32" className="text-white">
-        <defs>
-          <linearGradient id="moonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="100%" stopColor="#94a3b8" />
-          </linearGradient>
-        </defs>
-        <circle cx="16" cy="16" r="14" fill="url(#moonGradient)" />
-        <circle cx="22" cy="12" r="11" fill="#020617" />
-      </svg>
-      <div className="absolute -inset-1 bg-white/20 rounded-full blur-md -z-10" />
-    </div>
-    <div className="flex flex-col">
-      <span className="text-xl font-semibold text-white tracking-tight leading-none">moonboots</span>
-      <span className="text-[10px] font-medium text-slate-400 tracking-[0.2em] uppercase">content studio</span>
-    </div>
+  <div className="flex flex-col items-start">
+    <img
+      src="/moonboots-logo.png"
+      alt="moonboots"
+      className="h-8 w-auto"
+    />
+    <span className="text-[10px] font-medium text-slate-400 tracking-[0.2em] uppercase mt-1">content studio</span>
   </div>
 );
 
