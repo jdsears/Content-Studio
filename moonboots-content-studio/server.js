@@ -185,6 +185,63 @@ Only include the platforms requested. Make each post unique and tailored to that
   }
 });
 
+// OpenAI DALL-E image generation proxy
+app.post('/api/generate-image', async (req, res) => {
+  const { apiKey, prompt, platform } = req.body;
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'OpenAI API key is required' });
+  }
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  // Platform-specific sizes
+  const size = platform === 'instagram' ? '1024x1792' : '1792x1024';
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: prompt,
+        n: 1,
+        size: size,
+        quality: 'standard',
+        response_format: 'b64_json',
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('OpenAI API error:', data);
+      return res.status(response.status).json({
+        error: data.error?.message || 'Failed to generate image',
+        details: data
+      });
+    }
+
+    const base64Image = data.data?.[0]?.b64_json;
+    if (!base64Image) {
+      return res.status(500).json({ error: 'No image generated' });
+    }
+
+    res.json({
+      success: true,
+      image: `data:image/png;base64,${base64Image}`
+    });
+  } catch (error) {
+    console.error('OpenAI image generation failed:', error);
+    res.status(500).json({ error: error.message || 'Failed to connect to OpenAI' });
+  }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

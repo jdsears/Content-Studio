@@ -242,7 +242,7 @@ const getNextTimeSlots = (platform, count = 5) => {
   return slots;
 };
 
-// Generate AI image using OpenAI DALL-E
+// Generate AI image using OpenAI DALL-E via backend proxy
 const generateAIImage = async (content, platform, apiKey) => {
   // Extract the main idea from the content for the prompt
   const firstLine = content.split('\n')[0].trim();
@@ -251,30 +251,25 @@ const generateAIImage = async (content, platform, apiKey) => {
   const prompt = `Abstract minimalist artwork. Geometric shapes, subtle gradients, sophisticated dark blue and slate color palette. The visual mood should evoke: ${cleanConcept}. IMPORTANT: Do NOT include any text, words, letters, numbers, typography, writing, labels, or captions anywhere in the image. Pure abstract visual art only. Clean, professional, high quality.`;
 
   try {
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
+    const response = await fetch('/api/generate-image', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt: prompt,
-        n: 1,
-        size: platform === 'instagram' ? '1024x1792' : '1792x1024',  // Portrait for IG, landscape for others
-        quality: 'standard',
-        response_format: 'b64_json',
+        apiKey,
+        prompt,
+        platform,
       }),
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || 'Failed to generate image');
+      throw new Error(data.error || 'Failed to generate image');
     }
 
-    const data = await response.json();
-    const base64Image = data.data[0].b64_json;
-    return `data:image/png;base64,${base64Image}`;
+    return data.image;
   } catch (error) {
     console.error('AI image generation failed:', error);
     throw error;
