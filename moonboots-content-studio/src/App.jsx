@@ -64,7 +64,7 @@ const TabButton = ({ active, onClick, children, count }) => (
 );
 
 // Generate template-based image using canvas
-const generateTemplateImage = (content, template, platform) => {
+const generateTemplateImage = (content, template, platform, theme = 'midnight') => {
   const canvas = document.createElement('canvas');
   const size = platform === 'instagram' ? 1080 : 1200;
   const height = platform === 'x' ? 675 : size;
@@ -77,27 +77,26 @@ const generateTemplateImage = (content, template, platform) => {
   const headline = lines[0] || '';
   const body = lines.slice(1).join(' ').substring(0, 200);
 
-  // Template styles
-  const templates = {
-    quote: {
-      gradient: ['#0f172a', '#1e3a5f'],
-      accent: '#3b82f6',
-    },
-    stat: {
-      gradient: ['#1a1a2e', '#16213e'],
-      accent: '#10b981',
-    },
-    question: {
-      gradient: ['#1f1f1f', '#2d2d2d'],
-      accent: '#f59e0b',
-    },
-    insight: {
-      gradient: ['#0c0c0c', '#1a1a1a'],
-      accent: '#8b5cf6',
-    },
+  // Template layout styles
+  const templateLayouts = {
+    quote: { showQuoteMark: true, centered: false },
+    stat: { showQuoteMark: false, centered: true },
+    question: { showQuoteMark: false, centered: false },
+    insight: { showQuoteMark: false, centered: false },
   };
 
-  const t = templates[template] || templates.quote;
+  // Theme colors
+  const themeColors = {
+    midnight: { gradient: ['#0f172a', '#1e3a5f'], accent: '#3b82f6' },
+    forest: { gradient: ['#064e3b', '#065f46'], accent: '#10b981' },
+    sunset: { gradient: ['#7c2d12', '#9a3412'], accent: '#f97316' },
+    purple: { gradient: ['#3b0764', '#581c87'], accent: '#a855f7' },
+    ocean: { gradient: ['#0c4a6e', '#075985'], accent: '#0ea5e9' },
+    charcoal: { gradient: ['#171717', '#262626'], accent: '#737373' },
+  };
+
+  const t = themeColors[theme] || themeColors.midnight;
+  const layout = templateLayouts[template] || templateLayouts.quote;
 
   // Draw gradient background
   const grd = ctx.createLinearGradient(0, 0, size, height);
@@ -222,6 +221,16 @@ const getNextTimeSlots = (platform, count = 5) => {
   return slots;
 };
 
+// Template themes with colors
+const templateThemes = {
+  midnight: { name: 'Midnight', gradient: ['#0f172a', '#1e3a5f'], accent: '#3b82f6' },
+  forest: { name: 'Forest', gradient: ['#064e3b', '#065f46'], accent: '#10b981' },
+  sunset: { name: 'Sunset', gradient: ['#7c2d12', '#9a3412'], accent: '#f97316' },
+  purple: { name: 'Purple', gradient: ['#3b0764', '#581c87'], accent: '#a855f7' },
+  ocean: { name: 'Ocean', gradient: ['#0c4a6e', '#075985'], accent: '#0ea5e9' },
+  charcoal: { name: 'Charcoal', gradient: ['#171717', '#262626'], accent: '#737373' },
+};
+
 // Content Generator with optimal timing and images
 const ContentGenerator = ({ onGenerate, insights, settings }) => {
   const [topic, setTopic] = useState('');
@@ -232,9 +241,17 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
   const [generatedImages, setGeneratedImages] = useState({});
   const [generatingImages, setGeneratingImages] = useState({});
   const [useOptimalTiming, setUseOptimalTiming] = useState(true);
-  const [imageTemplate, setImageTemplate] = useState('quote');
   const [selectedSlots, setSelectedSlots] = useState({});
   const [showScheduleOptions, setShowScheduleOptions] = useState(null);
+
+  // Per-platform image settings
+  const [platformImageSettings, setPlatformImageSettings] = useState({
+    linkedin: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+    x: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+    instagram: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+  });
+
+  const [expandedPlatformSettings, setExpandedPlatformSettings] = useState(null);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -249,15 +266,30 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
 
     setGeneratedContent(content);
 
-    // Auto-generate images for each platform
+    // Auto-generate images for each platform based on per-platform settings
     Object.keys(platforms).forEach(platform => {
       if (platforms[platform] && content[platform]) {
+        const imgSettings = platformImageSettings[platform];
+        if (!imgSettings.enabled) return; // Skip if images disabled for this platform
+
         setGeneratingImages(prev => ({ ...prev, [platform]: true }));
-        setTimeout(() => {
-          const imageUrl = generateTemplateImage(content[platform], imageTemplate, platform);
-          setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-          setGeneratingImages(prev => ({ ...prev, [platform]: false }));
-        }, 500 + Math.random() * 1000);
+
+        if (imgSettings.type === 'ai' && settings.openaiApiKey) {
+          // AI image generation (simulated for now - would call OpenAI API)
+          setTimeout(() => {
+            // For now, fall back to template with a note
+            const imageUrl = generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+            setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+            setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+          }, 1500 + Math.random() * 1000);
+        } else {
+          // Template-based image generation
+          setTimeout(() => {
+            const imageUrl = generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+            setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+            setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+          }, 500 + Math.random() * 1000);
+        }
       }
     });
 
@@ -265,12 +297,20 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
   };
 
   const handleRegenerateImage = (platform, content) => {
+    const imgSettings = platformImageSettings[platform];
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
     setTimeout(() => {
-      const imageUrl = generateTemplateImage(content, imageTemplate, platform);
+      const imageUrl = generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
       setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
       setGeneratingImages(prev => ({ ...prev, [platform]: false }));
     }, 800);
+  };
+
+  const updatePlatformImageSetting = (platform, key, value) => {
+    setPlatformImageSettings(prev => ({
+      ...prev,
+      [platform]: { ...prev[platform], [key]: value }
+    }));
   };
 
   const handleAddToQueue = (platform) => {
@@ -363,25 +403,116 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
 
       <div>
         <label className="block text-sm text-slate-400 mb-2">Generate for</label>
-        <div className="flex gap-4">
-          {['linkedin', 'x', 'instagram'].map(platform => (
-            <label key={platform} className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={platforms[platform]} onChange={(e) => setPlatforms(prev => ({ ...prev, [platform]: e.target.checked }))} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-white focus:ring-0" />
-              <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
-              <span className="text-sm text-slate-300">{platform === 'x' ? 'X' : platform}</span>
-            </label>
-          ))}
-        </div>
-      </div>
+        <div className="space-y-3">
+          {['linkedin', 'x', 'instagram'].map(platform => {
+            const imgSettings = platformImageSettings[platform];
+            const isExpanded = expandedPlatformSettings === platform;
+            return (
+              <div key={platform} className="bg-slate-800/30 rounded-lg border border-slate-700/50">
+                <div className="flex items-center justify-between p-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={platforms[platform]} onChange={(e) => setPlatforms(prev => ({ ...prev, [platform]: e.target.checked }))} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-white focus:ring-0" />
+                    <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
+                    <span className="text-sm text-slate-300 capitalize">{platform === 'x' ? 'X' : platform}</span>
+                  </label>
+                  {platforms[platform] && (
+                    <button
+                      onClick={() => setExpandedPlatformSettings(isExpanded ? null : platform)}
+                      className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200"
+                    >
+                      <span className="px-2 py-0.5 bg-slate-700/50 rounded">
+                        {imgSettings.enabled ? (imgSettings.type === 'ai' ? 'AI Image' : `${imgSettings.theme}`) : 'No image'}
+                      </span>
+                      <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </button>
+                  )}
+                </div>
 
-      <div>
-        <label className="block text-sm text-slate-400 mb-2">Image template</label>
-        <div className="flex gap-2">
-          {['quote', 'stat', 'question', 'insight'].map(t => (
-            <button key={t} onClick={() => setImageTemplate(t)} className={`px-3 py-1.5 text-sm rounded-lg border capitalize ${imageTemplate === t ? 'bg-white text-slate-900' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}>
-              {t}
-            </button>
-          ))}
+                {platforms[platform] && isExpanded && (
+                  <div className="px-3 pb-3 pt-0 border-t border-slate-700/30 space-y-3">
+                    {/* Image enabled toggle */}
+                    <div className="flex items-center justify-between pt-3">
+                      <span className="text-xs text-slate-400">Include image</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={imgSettings.enabled}
+                          onChange={(e) => updatePlatformImageSetting(platform, 'enabled', e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                      </label>
+                    </div>
+
+                    {imgSettings.enabled && (
+                      <>
+                        {/* Image type: Template vs AI */}
+                        <div>
+                          <span className="text-xs text-slate-400 block mb-2">Image type</span>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => updatePlatformImageSetting(platform, 'type', 'template')}
+                              className={`flex-1 px-3 py-2 text-xs rounded-lg border ${imgSettings.type === 'template' ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}
+                            >
+                              Template
+                            </button>
+                            <button
+                              onClick={() => updatePlatformImageSetting(platform, 'type', 'ai')}
+                              className={`flex-1 px-3 py-2 text-xs rounded-lg border ${imgSettings.type === 'ai' ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}
+                            >
+                              AI Generated
+                            </button>
+                          </div>
+                          {imgSettings.type === 'ai' && !settings.openaiApiKey && (
+                            <p className="text-xs text-yellow-400 mt-1">OpenAI API key required for AI images</p>
+                          )}
+                        </div>
+
+                        {/* Template settings (shown when template type selected) */}
+                        {imgSettings.type === 'template' && (
+                          <>
+                            {/* Template layout */}
+                            <div>
+                              <span className="text-xs text-slate-400 block mb-2">Layout</span>
+                              <div className="flex flex-wrap gap-1">
+                                {['quote', 'stat', 'question', 'insight'].map(t => (
+                                  <button
+                                    key={t}
+                                    onClick={() => updatePlatformImageSetting(platform, 'template', t)}
+                                    className={`px-2 py-1 text-xs rounded capitalize ${imgSettings.template === t ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                                  >
+                                    {t}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Theme selection */}
+                            <div>
+                              <span className="text-xs text-slate-400 block mb-2">Theme</span>
+                              <div className="grid grid-cols-3 gap-1">
+                                {Object.entries(templateThemes).map(([key, theme]) => (
+                                  <button
+                                    key={key}
+                                    onClick={() => updatePlatformImageSetting(platform, 'theme', key)}
+                                    className={`px-2 py-1.5 text-xs rounded flex items-center gap-1.5 ${imgSettings.theme === key ? 'ring-2 ring-white' : ''}`}
+                                    style={{ background: `linear-gradient(135deg, ${theme.gradient[0]}, ${theme.gradient[1]})` }}
+                                  >
+                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.accent }} />
+                                    <span className="text-white">{theme.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -392,43 +523,59 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
       {generatedContent && (
         <div className="space-y-4 pt-4 border-t border-slate-800">
           <h3 className="text-sm font-medium text-slate-300">Generated Content</h3>
-          {Object.entries(generatedContent).map(([platform, content]) => content && platforms[platform] && (
-            <div key={platform} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
-                  <span className="text-sm text-slate-300">{platform === 'x' ? 'X (Manual)' : platform}</span>
-                  {useOptimalTiming && insights?.optimal?.[platform] && <span className="text-xs text-blue-400">→ {insights.optimal[platform].day} {insights.optimal[platform].hour}:00</span>}
+          {Object.entries(generatedContent).map(([platform, content]) => {
+            if (!content || !platforms[platform]) return null;
+            const imgSettings = platformImageSettings[platform];
+            return (
+              <div key={platform} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
+                    <span className="text-sm text-slate-300 capitalize">{platform === 'x' ? 'X (Manual)' : platform}</span>
+                    {imgSettings.enabled && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${imgSettings.type === 'ai' ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-700/50 text-slate-400'}`}>
+                        {imgSettings.type === 'ai' ? 'AI Image' : `${templateThemes[imgSettings.theme]?.name || imgSettings.theme}`}
+                      </span>
+                    )}
+                    {useOptimalTiming && selectedSlots[platform] && <span className="text-xs text-blue-400">→ {selectedSlots[platform].full}</span>}
+                  </div>
+                  <button onClick={() => handleAddToQueue(platform)} className="px-3 py-1 text-xs bg-white text-slate-900 rounded hover:bg-slate-100">Add to Queue</button>
                 </div>
-                <button onClick={() => handleAddToQueue(platform)} className="px-3 py-1 text-xs bg-white text-slate-900 rounded hover:bg-slate-100">Add to Queue</button>
-              </div>
 
-              <div className="flex gap-4">
-                <p className="text-sm text-slate-300 whitespace-pre-wrap flex-1">{content}</p>
+                <div className="flex gap-4">
+                  <p className="text-sm text-slate-300 whitespace-pre-wrap flex-1">{content}</p>
 
-                {/* Image preview */}
-                <div className="flex-shrink-0">
-                  {generatingImages[platform] ? (
-                    <div className="w-32 h-32 bg-slate-700/50 rounded-lg flex items-center justify-center">
-                      <div className="w-5 h-5 border-2 border-slate-500 border-t-white rounded-full animate-spin" />
+                  {/* Image preview */}
+                  {imgSettings.enabled && (
+                    <div className="flex-shrink-0">
+                      {generatingImages[platform] ? (
+                        <div className="w-32 h-32 bg-slate-700/50 rounded-lg flex flex-col items-center justify-center gap-2">
+                          <div className="w-5 h-5 border-2 border-slate-500 border-t-white rounded-full animate-spin" />
+                          <span className="text-[10px] text-slate-500">{imgSettings.type === 'ai' ? 'AI generating...' : 'Creating...'}</span>
+                        </div>
+                      ) : generatedImages[platform] ? (
+                        <div className="relative group">
+                          <img src={generatedImages[platform]} alt="Preview" className="w-32 h-32 object-cover rounded-lg" />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
+                            <button onClick={() => handleRegenerateImage(platform, content)} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Regenerate">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                            </button>
+                            <a href={generatedImages[platform]} download={`${platform}-image.png`} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Download">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                            </a>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-32 h-32 bg-slate-700/30 rounded-lg flex items-center justify-center">
+                          <span className="text-xs text-slate-500">No image</span>
+                        </div>
+                      )}
                     </div>
-                  ) : generatedImages[platform] ? (
-                    <div className="relative group">
-                      <img src={generatedImages[platform]} alt="Preview" className="w-32 h-32 object-cover rounded-lg" />
-                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
-                        <button onClick={() => handleRegenerateImage(platform, content)} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Regenerate">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                        </button>
-                        <a href={generatedImages[platform]} download={`${platform}-image.png`} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Download">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                        </a>
-                      </div>
-                    </div>
-                  ) : null}
+                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
