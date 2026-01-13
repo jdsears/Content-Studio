@@ -67,16 +67,22 @@ const TabButton = ({ active, onClick, children, count }) => (
 // Generate template-based image using canvas
 const generateTemplateImage = async (content, template, platform, theme = 'midnight') => {
   const canvas = document.createElement('canvas');
-  const size = platform === 'instagram' ? 1080 : 1200;
-  const height = platform === 'x' ? 675 : size;
-  canvas.width = size;
+
+  // Platform-optimized sizes
+  const sizes = {
+    instagram: { width: 1080, height: 1080 },  // Square for feed
+    linkedin: { width: 1200, height: 1200 },   // Square performs well
+    x: { width: 1200, height: 675 },           // 16:9 for timeline
+  };
+  const { width, height } = sizes[platform] || sizes.linkedin;
+  canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
 
-  // Extract headline and body from content - remove character limit
-  const lines = content.split('\n').filter(l => l.trim());
-  const headline = lines[0] || '';
-  const body = lines.slice(1).join(' ');
+  // Parse content - preserve paragraph structure
+  const paragraphs = content.split('\n').filter(l => l.trim());
+  const headline = paragraphs[0] || '';
+  const bodyParagraphs = paragraphs.slice(1);
 
   // Theme colors
   const themeColors = {
@@ -91,15 +97,15 @@ const generateTemplateImage = async (content, template, platform, theme = 'midni
   const t = themeColors[theme] || themeColors.midnight;
 
   // Draw gradient background
-  const grd = ctx.createLinearGradient(0, 0, size, height);
+  const grd = ctx.createLinearGradient(0, 0, width, height);
   grd.addColorStop(0, t.gradient[0]);
   grd.addColorStop(1, t.gradient[1]);
   ctx.fillStyle = grd;
-  ctx.fillRect(0, 0, size, height);
+  ctx.fillRect(0, 0, width, height);
 
   // Add subtle pattern
   ctx.globalAlpha = 0.03;
-  for (let i = 0; i < size; i += 30) {
+  for (let i = 0; i < width; i += 30) {
     ctx.beginPath();
     ctx.moveTo(i, 0);
     ctx.lineTo(i + height, height);
@@ -121,50 +127,60 @@ const generateTemplateImage = async (content, template, platform, theme = 'midni
       logo.onerror = reject;
       logo.src = '/moonboots-logo.png';
     });
-    // Draw logo scaled to fit
     const logoHeight = 40;
     const logoWidth = (logo.width / logo.height) * logoHeight;
-    ctx.drawImage(logo, size - logoWidth - 60, 60, logoWidth, logoHeight);
+    ctx.drawImage(logo, width - logoWidth - 60, 60, logoWidth, logoHeight);
   } catch {
-    // Fallback to text if logo fails to load
     ctx.font = 'bold 24px system-ui';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('moonboots', size - 180, 85);
+    ctx.fillText('moonboots', width - 180, 85);
   }
 
-  // Draw headline - sized to fit content
-  const headlineFontSize = Math.round(size * 0.04);
+  // Calculate font sizes based on canvas size
+  const scale = Math.min(width, height) / 1080;
+  const headlineFontSize = Math.round(42 * scale);
+  const bodyFontSize = Math.round(26 * scale);
+  const padding = 80;
+  const maxWidth = width - padding * 2;
+
+  // Draw headline
   ctx.font = `bold ${headlineFontSize}px system-ui`;
   ctx.fillStyle = '#ffffff';
-  const headlineLines = wrapText(ctx, headline, size - 140);
+  const headlineLines = wrapText(ctx, headline, maxWidth);
   let y = 180;
   const headlineLineHeight = headlineFontSize * 1.3;
-  headlineLines.slice(0, 6).forEach(line => {
-    ctx.fillText(line, 80, y);
+  headlineLines.slice(0, 5).forEach(line => {
+    ctx.fillText(line, padding, y);
     y += headlineLineHeight;
   });
 
-  // Draw body text - use remaining space
-  if (body) {
-    const bodyFontSize = Math.round(size * 0.024);
+  // Draw body paragraphs with proper spacing
+  if (bodyParagraphs.length > 0) {
     ctx.font = `${bodyFontSize}px system-ui`;
     ctx.fillStyle = '#94a3b8';
-    const bodyLines = wrapText(ctx, body, size - 140);
-    y += 20;
-    const bodyLineHeight = bodyFontSize * 1.5;
-    // Calculate how many lines can fit before footer
-    const availableHeight = height - y - 70;
-    const maxBodyLines = Math.floor(availableHeight / bodyLineHeight);
-    bodyLines.slice(0, Math.min(maxBodyLines, 15)).forEach(line => {
-      ctx.fillText(line, 80, y);
-      y += bodyLineHeight;
-    });
+    const bodyLineHeight = bodyFontSize * 1.4;
+    const paragraphSpacing = bodyFontSize * 0.8;
+    y += 25;
+
+    const footerY = height - 60;
+
+    for (const para of bodyParagraphs) {
+      if (y > footerY - bodyLineHeight * 2) break; // Stop before footer
+
+      const lines = wrapText(ctx, para, maxWidth);
+      for (const line of lines) {
+        if (y > footerY - bodyLineHeight) break;
+        ctx.fillText(line, padding, y);
+        y += bodyLineHeight;
+      }
+      y += paragraphSpacing; // Space between paragraphs
+    }
   }
 
   // Footer
   ctx.font = '14px system-ui';
   ctx.fillStyle = '#64748b';
-  ctx.fillText('moonbootslabs.com', 80, height - 50);
+  ctx.fillText('moonbootslabs.com', padding, height - 40);
 
   return canvas.toDataURL('image/png');
 };
@@ -1392,81 +1408,79 @@ export default function ContentStudio() {
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, image: null } : p));
   };
 
-  // Publish to Publer API
+  // Publish to Publer via backend proxy (avoids CORS issues)
   const publishToPubler = async (post) => {
     if (!settings.publerApiKey) {
       throw new Error('Publer API key not configured');
     }
 
-    // Map platform names to Publer social account types
-    const platformMap = {
-      linkedin: 'linkedin',
-      instagram: 'instagram',
-      x: 'twitter', // X was Twitter
-    };
-
-    const publerPlatform = platformMap[post.platform];
-    if (!publerPlatform) {
-      throw new Error(`Unsupported platform: ${post.platform}`);
-    }
-
-    // Build the post payload
-    const payload = {
-      text: post.content,
-      platforms: [publerPlatform],
-    };
-
-    // Add image if present (as URL or base64)
-    if (post.image) {
-      // If it's a base64 image, we need to upload it first or include it
-      if (post.image.startsWith('data:')) {
-        payload.media = [{ url: post.image }];
-      } else {
-        payload.media = [{ url: post.image }];
-      }
-    }
-
-    // Add scheduling if specified
-    if (post.scheduledFor) {
-      // Convert to ISO format for Publer
-      payload.scheduled_at = new Date(post.scheduledFor).toISOString();
-    }
-
     try {
-      const response = await fetch('https://publer.io/api/v1/posts', {
+      const response = await fetch('/api/publish', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${settings.publerApiKey}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          apiKey: settings.publerApiKey,
+          post: {
+            content: post.content,
+            platform: post.platform,
+            image: post.image,
+            scheduledFor: post.scheduledFor || post.suggestedTime,
+          },
+        }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to publish to Publer');
+        throw new Error(data.error || 'Failed to publish to Publer');
       }
 
-      return await response.json();
+      return data;
     } catch (error) {
       console.error('Publer publish failed:', error);
       throw error;
     }
   };
 
-  // Handle approve - marks post as approved for manual publishing
-  // Note: Direct Publer API calls from browser are blocked by CORS
-  // Users should copy content to Publer web interface or use Publer's browser extension
-  const handleApprove = (id) => {
+  // Handle approve - publishes to Publer if API key is configured
+  const handleApprove = async (id) => {
     const post = posts.find(p => p.id === id);
     if (!post) return;
 
-    setPosts(prev => prev.map(p => p.id === id ? {
-      ...p,
-      status: 'approved',
-      approvedAt: new Date().toISOString(),
-      scheduledFor: post.suggestedTime || null
-    } : p));
+    // If Publer API key is configured and platform supports it, publish automatically
+    if (settings.publerApiKey && post.platform !== 'x') {
+      // Update status to publishing
+      setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'publishing' } : p));
+
+      try {
+        await publishToPubler(post);
+        setPosts(prev => prev.map(p => p.id === id ? {
+          ...p,
+          status: 'published',
+          publishedAt: new Date().toISOString()
+        } : p));
+      } catch (error) {
+        console.error('Failed to publish:', error);
+        // Revert to approved status on error
+        setPosts(prev => prev.map(p => p.id === id ? {
+          ...p,
+          status: 'approved',
+          approvedAt: new Date().toISOString(),
+          error: error.message
+        } : p));
+        alert(`Failed to publish to Publer: ${error.message}`);
+      }
+    } else {
+      // For X or when no Publer key, just mark as approved
+      setPosts(prev => prev.map(p => p.id === id ? {
+        ...p,
+        status: 'approved',
+        approvedAt: new Date().toISOString(),
+        scheduledFor: post.suggestedTime || null
+      } : p));
+    }
   };
 
   // Copy post content to clipboard for easy pasting into Publer
