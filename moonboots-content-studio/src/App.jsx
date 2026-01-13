@@ -1155,11 +1155,26 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
 // Main App
 export default function ContentStudio() {
   const [activeTab, setActiveTab] = useState('generate');
-  const [posts, setPosts] = useState([
-    { id: 1, content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00', image: null },
-    { id: 2, content: "Web3 doesn't need more hype. It needs more builders.", platform: 'x', status: 'pending', pillar: 'Web3', createdAt: '2025-01-12', scheduledFor: null, image: null },
-    { id: 3, content: "Athletes have millions of followers but don't own the relationship.", platform: 'instagram', status: 'approved', pillar: 'Community Building', createdAt: '2025-01-11', scheduledFor: '2025-01-13 12:00', image: null },
-  ]);
+
+  // Posts queue with localStorage persistence
+  const [posts, setPosts] = useState(() => {
+    try {
+      const saved = localStorage.getItem('contentStudioPosts');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Save posts to localStorage when they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('contentStudioPosts', JSON.stringify(posts));
+    } catch (e) {
+      console.error('Failed to save posts:', e);
+    }
+  }, [posts]);
+
   const [performance] = useState(historicalPerformance);
 
   // Settings with localStorage persistence
