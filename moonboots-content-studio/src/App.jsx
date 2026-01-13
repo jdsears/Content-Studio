@@ -319,8 +319,19 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
   const setSelectedPillar = (value) => updateState({ selectedPillar: value });
   const setPlatforms = (value) => updateState({ platforms: typeof value === 'function' ? value(platforms) : value });
   const setGeneratedContent = (value) => updateState({ generatedContent: typeof value === 'function' ? value(generatedContent) : value });
-  const setGeneratedImages = (value) => updateState({ generatedImages: typeof value === 'function' ? value(generatedImages) : value });
-  const setGeneratingImages = (value) => updateState({ generatingImages: typeof value === 'function' ? value(generatingImages) : value });
+  // Use setGeneratorState directly to access actual prev state (fixes stale closure in parallel async ops)
+  const setGeneratedImages = (value) => {
+    setGeneratorState(prev => ({
+      ...prev,
+      generatedImages: typeof value === 'function' ? value(prev.generatedImages || {}) : value
+    }));
+  };
+  const setGeneratingImages = (value) => {
+    setGeneratorState(prev => ({
+      ...prev,
+      generatingImages: typeof value === 'function' ? value(prev.generatingImages || {}) : value
+    }));
+  };
   const setUseOptimalTiming = (value) => updateState({ useOptimalTiming: value });
   const setSelectedSlots = (value) => updateState({ selectedSlots: typeof value === 'function' ? value(selectedSlots) : value });
   const setPlatformImageSettings = (value) => updateState({ platformImageSettings: typeof value === 'function' ? value(platformImageSettings) : value });

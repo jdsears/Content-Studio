@@ -119,25 +119,64 @@ app.post('/api/publish', async (req, res) => {
       social_account_ids: [accountId],
     };
 
-    // Add image if present (base64 needs special handling)
-    if (post.image) {
-      if (post.image.startsWith('data:')) {
-        // For base64 images, use the media upload approach
-        payload.media = [{
-          type: 'image',
-          data: post.image.split(',')[1], // Remove data:image/png;base64, prefix
-        }];
-      } else {
-        payload.media = [{ url: post.image }];
-      }
-    }
-
     // Add scheduling if specified
     if (post.scheduledFor) {
       payload.scheduled_at = new Date(post.scheduledFor).toISOString();
     }
 
-    console.log('Publer payload:', { ...payload, media: payload.media ? '[media]' : undefined });
+    // Handle image upload if present
+    let mediaUrl = null;
+    if (post.image && post.image.startsWith('data:')) {
+      // Upload image to Publer's media endpoint first
+      try {
+        const base64Data = post.image.split(',')[1];
+        const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
+
+        const uploadResponse = await fetch('https://publer.io/api/v1/media/upload_base64', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            file: base64Data,
+            content_type: mimeType,
+          }),
+        });
+
+        const uploadText = await uploadResponse.text();
+
+        // Check if response is HTML (error page)
+        if (uploadText.trim().startsWith('<')) {
+          console.error('Publer media upload returned HTML:', uploadText.substring(0, 200));
+          // Continue without image
+        } else {
+          try {
+            const uploadData = JSON.parse(uploadText);
+            if (uploadResponse.ok && uploadData.url) {
+              mediaUrl = uploadData.url;
+            } else {
+              console.error('Publer media upload failed:', uploadData);
+            }
+          } catch (parseErr) {
+            console.error('Failed to parse media upload response:', uploadText.substring(0, 200));
+          }
+        }
+      } catch (uploadError) {
+        console.error('Media upload error:', uploadError);
+        // Continue without image
+      }
+    } else if (post.image) {
+      // Use URL directly
+      mediaUrl = post.image;
+    }
+
+    // Add media to payload if we have it
+    if (mediaUrl) {
+      payload.media = [{ url: mediaUrl }];
+    }
+
+    console.log('Publer payload:', { ...payload, media: payload.media ? '[media present]' : 'no media' });
 
     const response = await fetch('https://publer.io/api/v1/posts', {
       method: 'POST',
@@ -148,7 +187,28 @@ app.post('/api/publish', async (req, res) => {
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
+    // Handle potential HTML error responses
+    const responseText = await response.text();
+
+    // Check if response is HTML (error page)
+    if (responseText.trim().startsWith('<')) {
+      console.error('Publer API returned HTML:', responseText.substring(0, 200));
+      return res.status(500).json({
+        error: 'Publer API returned an error page. Please check your API key and try again.',
+        hint: 'Your Publer API key may be invalid or expired.'
+      });
+    }
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.error('Failed to parse Publer response:', responseText.substring(0, 200));
+      return res.status(500).json({
+        error: 'Invalid response from Publer API',
+        raw: responseText.substring(0, 200)
+      });
+    }
 
     if (!response.ok) {
       console.error('Publer API error:', data);
