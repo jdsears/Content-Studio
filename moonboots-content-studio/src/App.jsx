@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { api, checkBackendAvailable } from './lib/api';
 import { generateContent as claudeGenerateContent } from './lib/claude';
-import { createPost as publerCreatePost, getAccounts as publerGetAccounts } from './lib/publer';
+import { createPost as publerCreatePost, getAccounts as publerGetAccounts, uploadMedia as publerUploadMedia } from './lib/publer';
+import { autoGenerateImage, dataURLtoBlob } from './lib/imageGenerator';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -174,6 +175,9 @@ const ContentGenerator = ({
   const [sendingToPubler, setSendingToPubler] = useState({});
   const [publerAccounts, setPublerAccounts] = useState(null);
   const [publerError, setPublerError] = useState(null);
+  const [generatedImages, setGeneratedImages] = useState({});
+  const [autoGenerateImages, setAutoGenerateImages] = useState(true);
+  const [generatingImages, setGeneratingImages] = useState({});
 
   // Fetch Publer accounts when credentials are available
   useEffect(() => {
@@ -202,7 +206,36 @@ const ContentGenerator = ({
     return account?.id || account?._id;
   };
 
-  const handleSendToPubler = async (platform) => {
+  // Generate image for a specific platform
+  const handleGenerateImage = (platform) => {
+    if (!generatedContent?.[platform]) return;
+    setGeneratingImages(prev => ({ ...prev, [platform]: true }));
+    try {
+      const imageDataUrl = autoGenerateImage({
+        content: generatedContent[platform],
+        platform,
+        style: 'gradient'
+      });
+      setGeneratedImages(prev => ({ ...prev, [platform]: imageDataUrl }));
+    } catch (err) {
+      console.error('Failed to generate image:', err);
+    } finally {
+      setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+    }
+  };
+
+  // Auto-generate images when content is generated
+  useEffect(() => {
+    if (generatedContent && autoGenerateImages) {
+      Object.keys(generatedContent).forEach(platform => {
+        if (generatedContent[platform] && platforms[platform] && !generatedImages[platform]) {
+          handleGenerateImage(platform);
+        }
+      });
+    }
+  }, [generatedContent, autoGenerateImages]);
+
+  const handleSendToPubler = async (platform, includeImage = true) => {
     if (!publerApiKey || !publerWorkspaceId) {
       setPublerError('Publer API credentials not configured. Go to Settings.');
       return;
@@ -218,16 +251,38 @@ const ContentGenerator = ({
     setPublerError(null);
 
     try {
+      let mediaUrls = [];
+
+      // Upload image if available
+      if (includeImage && generatedImages[platform]) {
+        try {
+          const blob = dataURLtoBlob(generatedImages[platform]);
+          const mediaResult = await publerUploadMedia({
+            apiKey: publerApiKey,
+            workspaceId: publerWorkspaceId,
+            blob,
+            filename: `moonboots-${platform}-${Date.now()}.png`
+          });
+          if (mediaResult?.url) {
+            mediaUrls = [mediaResult.url];
+          }
+        } catch (uploadErr) {
+          console.error('Image upload failed, sending without image:', uploadErr);
+        }
+      }
+
       await publerCreatePost({
         apiKey: publerApiKey,
         workspaceId: publerWorkspaceId,
         accountIds: [accountId],
         content: generatedContent[platform],
-        status: 'draft', // Send as draft so user can review in Publer
+        mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+        status: 'draft',
       });
 
-      // Clear the content after successful send
+      // Clear the content and image after successful send
       setGeneratedContent(prev => ({ ...prev, [platform]: null }));
+      setGeneratedImages(prev => ({ ...prev, [platform]: null }));
     } catch (err) {
       console.error('Failed to send to Publer:', err);
       setPublerError(err.message);
@@ -497,12 +552,26 @@ const ContentGenerator = ({
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               Generated Content
             </h3>
-            {publerConfigured && publerAccounts && (
-              <span className="text-xs text-violet-400 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                Publer connected
-              </span>
-            )}
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoGenerateImages}
+                  onChange={(e) => setAutoGenerateImages(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-8 h-4 rounded-full transition-colors ${autoGenerateImages ? 'bg-violet-500' : 'bg-slate-700'}`}>
+                  <div className={`w-3 h-3 rounded-full bg-white mt-0.5 transition-transform ${autoGenerateImages ? 'translate-x-4.5 ml-0.5' : 'translate-x-0.5'}`} />
+                </div>
+                <span className="text-xs text-slate-400">Auto images</span>
+              </label>
+              {publerConfigured && publerAccounts && (
+                <span className="text-xs text-violet-400 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+                  Publer connected
+                </span>
+              )}
+            </div>
           </div>
 
           {publerError && (
@@ -541,7 +610,10 @@ const ContentGenerator = ({
                           Sending...
                         </>
                       ) : (
-                        'Send to Publer'
+                        <>
+                          {generatedImages[platform] && <span className="text-xs opacity-75">+ image</span>}
+                          Send to Publer
+                        </>
                       )}
                     </button>
                   )}
@@ -553,7 +625,66 @@ const ContentGenerator = ({
                   </button>
                 </div>
               </div>
-              <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
+
+              {/* Content and Image Preview */}
+              <div className={generatedImages[platform] ? 'flex gap-4' : ''}>
+                <div className="flex-1">
+                  <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
+                </div>
+
+                {/* Image Preview */}
+                {(generatedImages[platform] || generatingImages[platform]) && (
+                  <div className="flex-shrink-0">
+                    {generatingImages[platform] ? (
+                      <div className="w-32 h-32 bg-slate-800/50 rounded-lg flex items-center justify-center">
+                        <div className="w-6 h-6 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+                      </div>
+                    ) : (
+                      <div className="relative group">
+                        <img
+                          src={generatedImages[platform]}
+                          alt={`${platform} preview`}
+                          className="w-32 h-auto rounded-lg border border-slate-700/50"
+                        />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => handleGenerateImage(platform)}
+                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
+                            title="Regenerate"
+                          >
+                            ↻
+                          </button>
+                          <button
+                            onClick={() => setGeneratedImages(prev => ({ ...prev, [platform]: null }))}
+                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
+                            title="Remove"
+                          >
+                            ✕
+                          </button>
+                          <a
+                            href={generatedImages[platform]}
+                            download={`moonboots-${platform}-${Date.now()}.png`}
+                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
+                            title="Download"
+                          >
+                            ↓
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Generate Image Button (if no image and auto is off) */}
+                {!generatedImages[platform] && !generatingImages[platform] && !autoGenerateImages && (
+                  <button
+                    onClick={() => handleGenerateImage(platform)}
+                    className="flex-shrink-0 px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700"
+                  >
+                    + Add Image
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

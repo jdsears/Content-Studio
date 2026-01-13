@@ -4,11 +4,39 @@
 const PUBLER_API_URL = 'https://app.publer.com/api/v1';
 
 // Get headers for Publer API requests
-const getHeaders = (apiKey, workspaceId) => ({
-  'Authorization': `Bearer-API ${apiKey}`,
-  'Publer-Workspace-Id': workspaceId,
-  'Content-Type': 'application/json',
-});
+const getHeaders = (apiKey, workspaceId, includeContentType = true) => {
+  const headers = {
+    'Authorization': `Bearer-API ${apiKey}`,
+    'Publer-Workspace-Id': workspaceId,
+  };
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+};
+
+// Upload media file to Publer
+export async function uploadMedia({ apiKey, workspaceId, blob, filename = 'image.png' }) {
+  if (!apiKey || !workspaceId) {
+    throw new Error('Publer API key and Workspace ID required');
+  }
+
+  const formData = new FormData();
+  formData.append('file', blob, filename);
+
+  const response = await fetch(`${PUBLER_API_URL}/media`, {
+    method: 'POST',
+    headers: getHeaders(apiKey, workspaceId, false), // Don't include Content-Type for multipart
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || 'Failed to upload media');
+  }
+
+  return response.json();
+}
 
 // Get connected social accounts
 export async function getAccounts({ apiKey, workspaceId }) {
