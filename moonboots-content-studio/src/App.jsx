@@ -3,6 +3,7 @@ import { api, checkBackendAvailable } from './lib/api';
 import { generateContent as claudeGenerateContent } from './lib/claude';
 import { createPost as publerCreatePost, getAccounts as publerGetAccounts, uploadMedia as publerUploadMedia } from './lib/publer';
 import { autoGenerateImage, dataURLtoBlob } from './lib/imageGenerator';
+import { generateAIImageAsDataUrl } from './lib/openai';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -153,6 +154,7 @@ const ContentGenerator = ({
   onGenerate,
   insights,
   claudeApiKey,
+  openaiApiKey,
   publerApiKey,
   publerWorkspaceId,
   // Lifted state props
@@ -178,6 +180,7 @@ const ContentGenerator = ({
   const [generatedImages, setGeneratedImages] = useState({});
   const [autoGenerateImages, setAutoGenerateImages] = useState(true);
   const [generatingImages, setGeneratingImages] = useState({});
+  const [imageMode, setImageMode] = useState('template'); // 'template' or 'ai'
 
   // Fetch Publer accounts when credentials are available
   useEffect(() => {
@@ -207,18 +210,49 @@ const ContentGenerator = ({
   };
 
   // Generate image for a specific platform
-  const handleGenerateImage = (platform) => {
+  const handleGenerateImage = async (platform, forceMode = null) => {
     if (!generatedContent?.[platform]) return;
+
+    const mode = forceMode || imageMode;
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
+
     try {
-      const imageDataUrl = autoGenerateImage({
-        content: generatedContent[platform],
-        platform,
-        style: 'gradient'
-      });
+      let imageDataUrl;
+
+      if (mode === 'ai' && openaiApiKey) {
+        // Use OpenAI AI-generated image
+        const pillarName = pillars.find(p => p.id === selectedPillar)?.name || '';
+        imageDataUrl = await generateAIImageAsDataUrl({
+          apiKey: openaiApiKey,
+          content: generatedContent[platform],
+          platform,
+          pillar: pillarName
+        });
+      } else {
+        // Use template-based image
+        imageDataUrl = autoGenerateImage({
+          content: generatedContent[platform],
+          platform,
+          style: 'gradient'
+        });
+      }
+
       setGeneratedImages(prev => ({ ...prev, [platform]: imageDataUrl }));
     } catch (err) {
       console.error('Failed to generate image:', err);
+      // Fallback to template if AI fails
+      if (mode === 'ai') {
+        try {
+          const imageDataUrl = autoGenerateImage({
+            content: generatedContent[platform],
+            platform,
+            style: 'gradient'
+          });
+          setGeneratedImages(prev => ({ ...prev, [platform]: imageDataUrl }));
+        } catch (fallbackErr) {
+          console.error('Fallback image generation also failed:', fallbackErr);
+        }
+      }
     } finally {
       setGeneratingImages(prev => ({ ...prev, [platform]: false }));
     }
@@ -565,6 +599,23 @@ const ContentGenerator = ({
                 </div>
                 <span className="text-xs text-slate-400">Auto images</span>
               </label>
+              {/* Image Mode Toggle */}
+              <div className="flex items-center gap-1 p-0.5 bg-slate-800 rounded-lg">
+                <button
+                  onClick={() => setImageMode('template')}
+                  className={`px-2 py-1 text-xs rounded transition-all ${imageMode === 'template' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-300'}`}
+                >
+                  Template
+                </button>
+                <button
+                  onClick={() => setImageMode('ai')}
+                  disabled={!openaiApiKey}
+                  title={!openaiApiKey ? 'Add OpenAI API key in Settings' : 'AI-generated images'}
+                  className={`px-2 py-1 text-xs rounded transition-all ${imageMode === 'ai' ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-white' : 'text-slate-400 hover:text-slate-300'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  AI
+                </button>
+              </div>
               {publerConfigured && publerAccounts && (
                 <span className="text-xs text-violet-400 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
@@ -636,8 +687,11 @@ const ContentGenerator = ({
                 {(generatedImages[platform] || generatingImages[platform]) && (
                   <div className="flex-shrink-0">
                     {generatingImages[platform] ? (
-                      <div className="w-32 h-32 bg-slate-800/50 rounded-lg flex items-center justify-center">
-                        <div className="w-6 h-6 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+                      <div className="w-32 h-40 bg-slate-800/50 rounded-lg flex flex-col items-center justify-center gap-2">
+                        <div className={`w-6 h-6 border-2 rounded-full animate-spin ${imageMode === 'ai' ? 'border-emerald-500/30 border-t-emerald-500' : 'border-violet-500/30 border-t-violet-500'}`} />
+                        <span className="text-[10px] text-slate-500">
+                          {imageMode === 'ai' ? 'AI generating...' : 'Creating...'}
+                        </span>
                       </div>
                     ) : (
                       <div className="relative group">
@@ -646,28 +700,39 @@ const ContentGenerator = ({
                           alt={`${platform} preview`}
                           className="w-32 h-auto rounded-lg border border-slate-700/50"
                         />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => handleGenerateImage(platform)}
-                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
-                            title="Regenerate"
-                          >
-                            ↻
-                          </button>
-                          <button
-                            onClick={() => setGeneratedImages(prev => ({ ...prev, [platform]: null }))}
-                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
-                            title="Remove"
-                          >
-                            ✕
-                          </button>
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex flex-col items-center justify-center gap-2 p-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleGenerateImage(platform, 'template')}
+                              className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
+                              title="Regenerate with Template"
+                            >
+                              ↻
+                            </button>
+                            {openaiApiKey && (
+                              <button
+                                onClick={() => handleGenerateImage(platform, 'ai')}
+                                className="p-1.5 bg-gradient-to-r from-emerald-500/50 to-cyan-500/50 rounded text-white text-xs hover:from-emerald-500/70 hover:to-cyan-500/70"
+                                title="Regenerate with AI"
+                              >
+                                AI
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setGeneratedImages(prev => ({ ...prev, [platform]: null }))}
+                              className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
+                              title="Remove"
+                            >
+                              ✕
+                            </button>
+                          </div>
                           <a
                             href={generatedImages[platform]}
                             download={`moonboots-${platform}-${Date.now()}.png`}
-                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
+                            className="px-2 py-1 bg-white/20 rounded text-white text-[10px] hover:bg-white/30"
                             title="Download"
                           >
-                            ↓
+                            Download
                           </a>
                         </div>
                       </div>
@@ -677,12 +742,22 @@ const ContentGenerator = ({
 
                 {/* Generate Image Button (if no image and auto is off) */}
                 {!generatedImages[platform] && !generatingImages[platform] && !autoGenerateImages && (
-                  <button
-                    onClick={() => handleGenerateImage(platform)}
-                    className="flex-shrink-0 px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700"
-                  >
-                    + Add Image
-                  </button>
+                  <div className="flex-shrink-0 flex flex-col gap-1">
+                    <button
+                      onClick={() => handleGenerateImage(platform, 'template')}
+                      className="px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700"
+                    >
+                      + Template
+                    </button>
+                    {openaiApiKey && (
+                      <button
+                        onClick={() => handleGenerateImage(platform, 'ai')}
+                        className="px-3 py-2 text-xs bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 text-emerald-300 rounded-lg hover:from-emerald-500/30 hover:to-cyan-500/30 border border-emerald-500/30"
+                      >
+                        + AI Image
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1616,6 +1691,7 @@ const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
   const [localSettings, setLocalSettings] = useState(settings);
   const [showClaudeKey, setShowClaudeKey] = useState(false);
   const [showPublerKey, setShowPublerKey] = useState(false);
+  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
 
   useEffect(() => {
     setLocalSettings(settings);
@@ -1667,6 +1743,26 @@ const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
             </div>
             <p className="text-xs text-slate-600 mt-1">Get your key at console.anthropic.com</p>
           </div>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">OpenAI API Key (for AI Images)</label>
+            <div className="relative">
+              <input
+                type={showOpenAIKey ? 'text' : 'password'}
+                value={localSettings.openaiApiKey || ''}
+                onChange={(e) => setLocalSettings(prev => ({ ...prev, openaiApiKey: e.target.value }))}
+                placeholder="sk-..."
+                className="w-full px-3 py-2 pr-16 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOpenAIKey(!showOpenAIKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
+              >
+                {showOpenAIKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 mt-1">Get your key at platform.openai.com - enables AI-generated images</p>
+          </div>
           <div className="pt-2 border-t border-slate-800">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-sm font-medium text-slate-300">Publer Integration</span>
@@ -1716,9 +1812,11 @@ const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
           {saving ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Saving...</> : 'Save Settings'}
         </button>
       )}
-      {!hasChanges && localSettings.claudeApiKey && (
+      {!hasChanges && (localSettings.claudeApiKey || localSettings.openaiApiKey) && (
         <div className="p-3 bg-green-900/20 rounded-lg border border-green-800/30 text-xs text-green-400">
-          Settings saved. Claude API is configured.
+          Settings saved.
+          {localSettings.claudeApiKey && ' Claude API configured.'}
+          {localSettings.openaiApiKey && ' OpenAI API configured (AI images enabled).'}
         </div>
       )}
     </div>
@@ -1818,7 +1916,7 @@ export default function ContentStudio() {
   const [activeTab, setActiveTab] = useState('generate');
   const [posts, setPosts] = useState([]);
   const [performance, setPerformance] = useState(historicalPerformance);
-  const [settings, setSettings] = useState({ claudeApiKey: '', bufferAccessToken: '' });
+  const [settings, setSettings] = useState({ claudeApiKey: '', openaiApiKey: '', bufferAccessToken: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [performanceLogPost, setPerformanceLogPost] = useState(null);
@@ -2098,6 +2196,7 @@ export default function ContentStudio() {
                 onGenerate={handleGenerate}
                 insights={insights}
                 claudeApiKey={settings.claudeApiKey}
+                openaiApiKey={settings.openaiApiKey}
                 publerApiKey={settings.publerApiKey}
                 publerWorkspaceId={settings.publerWorkspaceId}
                 topic={generatorTopic}
