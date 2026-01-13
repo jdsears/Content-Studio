@@ -185,7 +185,14 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'At least one platform must be selected' });
   }
 
-  const systemPrompt = `You are a social media content strategist for moonboots, a consultancy focused on AI strategy, Web3, community building, and business transformation.
+  const systemPrompt = `You are a social media content strategist for moonboots labs, a consultancy and venture studio.
+
+moonboots labs focus areas:
+1. COMMUNITY BUILDING INFRASTRUCTURE (moments) - A white-label community platform that lets creators own their audience relationships. Features: memberships, badges, gated content, live-streaming, fan timelines, rewards. For musicians, artists, athletes, brands seeking platform independence.
+2. WEB3 INFRASTRUCTURE (deepfabrik) - Blockchain solutions, tokenization platforms
+3. AGENTIC AI SOLUTIONS & CONSULTANCY - AI agents, automation, enterprise AI strategy
+4. WEB3 STRATEGY & TOKENISED INVESTMENT - Token economics, crypto investment
+5. VENTURE CAPITAL & REAL ESTATE - Startups, tokenized real estate
 
 Write engaging, thought-provoking content that:
 - Sounds authentic and conversational, not corporate
@@ -193,8 +200,9 @@ Write engaging, thought-provoking content that:
 - Avoids buzzwords and jargon
 - Uses short paragraphs and line breaks for readability
 - Is optimized for each platform's style and audience
+- Positions community ownership as the future (own vs rent your audience)
 
-The founder's voice is: thoughtful, direct, occasionally contrarian, draws from real experience with startups and enterprise clients.`;
+The founder's voice is: thoughtful, direct, occasionally contrarian, draws from real experience with startups and enterprise clients. Skeptical of platform dependency, values substance over hype.`;
 
   const userPrompt = `Create social media posts about: "${topic}"
 Content pillar: ${pillar || 'AI Strategy'}
@@ -279,13 +287,41 @@ app.post('/api/suggest-topic', async (req, res) => {
 
   const moonbootsContext = `moonboots labs is a consultancy and venture studio focused on:
 
-1. COMMUNITY BUILDING INFRASTRUCTURE (moments) - Tools and strategies for building engaged communities, fan engagement, direct-to-fan relationships
+1. COMMUNITY BUILDING INFRASTRUCTURE (moments)
+   moments is a white-label community infrastructure platform - NOT another social network.
+
+   Core capabilities:
+   - Memberships & subscriptions with flexible tiers
+   - Achievement badges and gamification systems
+   - Gated content for exclusive access
+   - Live-streaming with real-time engagement
+   - Fan timelines and activity feeds
+   - Rewards and loyalty programs
+   - Direct messaging and community interaction
+
+   Use cases:
+   - Musicians building direct fan relationships outside streaming platforms
+   - Artists creating exclusive collector communities
+   - Athletes connecting with superfans
+   - Brands building owned community spaces
+   - Creators seeking platform independence
+
+   Strategic value:
+   - Own your audience data and relationships (not rented from social platforms)
+   - Brand continuity - your community, your rules, your look
+   - Platform independence - no algorithm changes affecting reach
+   - Monetization without platform fees or gatekeepers
+   - Deep fan insights and engagement analytics
+
 2. WEB3 INFRASTRUCTURE (deepfabrik) - Blockchain solutions, tokenization platforms, decentralized applications
+
 3. AGENTIC AI SOLUTIONS & CONSULTANCY - AI agents, automation, enterprise AI strategy, practical AI implementation
+
 4. WEB3 STRATEGY & TOKENISED INVESTMENT - Token economics, crypto investment strategies, DeFi
+
 5. VENTURE CAPITAL & REAL ESTATE - Investment in startups, tokenized real estate, alternative assets
 
-The founder's perspective: Practical, experience-driven insights from working with both startups and enterprises. Skeptical of hype, focused on what actually works. Values community over vanity metrics, substance over buzzwords.`;
+The founder's perspective: Practical, experience-driven insights from working with both startups and enterprises. Skeptical of hype, focused on what actually works. Values community over vanity metrics, substance over buzzwords. Believes creators and brands should own their audience relationships, not rent them from platforms.`;
 
   const prompt = `${moonbootsContext}
 
