@@ -45,9 +45,9 @@ const drawMoonLogo = (ctx, x, y, config, size = 14) => {
 };
 
 /**
- * Generate a quote card image
+ * Generate a quote card image with headline and supporting text
  * @param {Object} options
- * @param {string} options.content - The quote/text content
+ * @param {string} options.content - The quote/text content (can include headline + body)
  * @param {string} options.platform - 'instagram' | 'x' | 'linkedin'
  * @param {string} options.style - 'dark' | 'light' | 'gradient' | 'vibrant'
  * @returns {string} Data URL of the generated image
@@ -72,45 +72,69 @@ export function generateQuoteImage({ content, platform = 'instagram', style = 'g
   }
   ctx.fillRect(0, 0, width, height);
 
-  const padding = Math.min(width, height) * 0.055;
+  const padding = Math.min(width, height) * 0.07;
   const logoY = padding + 30;
 
   // Draw logo
-  drawMoonLogo(ctx, padding + 14, logoY, config);
+  drawMoonLogo(ctx, padding + 14, logoY, config, 16);
   ctx.fillStyle = config.text;
-  ctx.font = '600 28px system-ui, -apple-system, sans-serif';
-  ctx.fillText('moonboots', padding + 42, logoY + 8);
+  ctx.font = '600 32px system-ui, -apple-system, sans-serif';
+  ctx.fillText('moonboots', padding + 46, logoY + 10);
+
+  // Parse content into headline and body
+  const parts = content.split('\n\n');
+  const headline = parts[0] || content;
+  const body = parts.slice(1).join('\n\n');
 
   // Content area
   const contentArea = {
     x: padding,
-    y: logoY + 60,
+    y: logoY + 80,
     width: width - padding * 2,
-    height: height - logoY - 120
+    height: height - logoY - 160
   };
 
-  // Quote text
-  const fontSize = Math.min(width, height) * 0.039;
-  ctx.font = `300 ${fontSize}px system-ui, -apple-system, sans-serif`;
-  const lines = wrapText(ctx, content, contentArea.width);
-  const totalHeight = lines.length * fontSize * 1.4;
-  let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
+  // Headline - larger, bolder
+  const headlineFontSize = Math.min(width, height) * 0.055;
+  ctx.font = `700 ${headlineFontSize}px system-ui, -apple-system, sans-serif`;
   ctx.fillStyle = config.text;
-  for (let line of lines) {
+  const headlineLines = wrapText(ctx, headline, contentArea.width);
+  const maxHeadlineLines = 3;
+  const displayHeadlineLines = headlineLines.slice(0, maxHeadlineLines);
+
+  let y = contentArea.y + headlineFontSize;
+  for (let line of displayHeadlineLines) {
     ctx.fillText(line, contentArea.x, y);
-    y += fontSize * 1.4;
+    y += headlineFontSize * 1.25;
+  }
+
+  // Body text - smaller, lighter weight
+  if (body) {
+    y += headlineFontSize * 0.5; // Gap between headline and body
+    const bodyFontSize = Math.min(width, height) * 0.035;
+    ctx.font = `400 ${bodyFontSize}px system-ui, -apple-system, sans-serif`;
+    ctx.fillStyle = config.accent;
+    const bodyLines = wrapText(ctx, body, contentArea.width);
+    const maxBodyLines = 6;
+    const displayBodyLines = bodyLines.slice(0, maxBodyLines);
+
+    for (let line of displayBodyLines) {
+      if (y > height - padding - 60) break; // Don't overflow into footer
+      ctx.fillText(line, contentArea.x, y);
+      y += bodyFontSize * 1.4;
+    }
   }
 
   // Footer
   ctx.fillStyle = config.accent;
-  ctx.font = '400 22px system-ui, -apple-system, sans-serif';
+  ctx.font = '400 24px system-ui, -apple-system, sans-serif';
   ctx.fillText('moonbootsconsultancy.net', padding, height - padding - 10);
 
   return canvas.toDataURL('image/png');
 }
 
 /**
- * Generate a stat highlight image
+ * Generate a stat highlight image with large stat and supporting context
  */
 export function generateStatImage({ stat, context, platform = 'instagram', style = 'vibrant' }) {
   const canvas = document.createElement('canvas');
@@ -132,44 +156,49 @@ export function generateStatImage({ stat, context, platform = 'instagram', style
   }
   ctx.fillRect(0, 0, width, height);
 
-  const padding = Math.min(width, height) * 0.055;
+  const padding = Math.min(width, height) * 0.07;
   const logoY = padding + 30;
 
   // Draw logo
-  drawMoonLogo(ctx, padding + 14, logoY, config);
+  drawMoonLogo(ctx, padding + 14, logoY, config, 16);
   ctx.fillStyle = config.text;
-  ctx.font = '600 28px system-ui, -apple-system, sans-serif';
-  ctx.fillText('moonboots', padding + 42, logoY + 8);
+  ctx.font = '600 32px system-ui, -apple-system, sans-serif';
+  ctx.fillText('moonboots', padding + 46, logoY + 10);
 
-  // Stat
-  const statFontSize = Math.min(width, height) * 0.15;
-  const contextFontSize = Math.min(width, height) * 0.032;
-  ctx.font = `800 ${statFontSize}px system-ui`;
+  // Large stat number
+  const statFontSize = Math.min(width, height) * 0.18;
+  ctx.font = `900 ${statFontSize}px system-ui`;
   ctx.fillStyle = config.text;
-  const statY = height / 2;
+  const statY = height * 0.42;
   ctx.fillText(stat, padding, statY);
 
+  // Context text - larger and more visible
   if (context) {
-    ctx.font = `300 ${contextFontSize}px system-ui`;
-    ctx.fillStyle = config.accent;
+    const contextFontSize = Math.min(width, height) * 0.04;
+    ctx.font = `500 ${contextFontSize}px system-ui`;
+    ctx.fillStyle = config.text;
+    ctx.globalAlpha = 0.9;
     const contextLines = wrapText(ctx, context, width - padding * 2);
-    let y = statY + 30;
-    contextLines.forEach(line => {
+    const maxContextLines = 5;
+    let y = statY + statFontSize * 0.3;
+    contextLines.slice(0, maxContextLines).forEach(line => {
+      if (y > height - padding - 60) return;
       ctx.fillText(line, padding, y);
-      y += contextFontSize * 1.4;
+      y += contextFontSize * 1.35;
     });
+    ctx.globalAlpha = 1;
   }
 
   // Footer
   ctx.fillStyle = config.accent;
-  ctx.font = '400 22px system-ui, -apple-system, sans-serif';
+  ctx.font = '400 24px system-ui, -apple-system, sans-serif';
   ctx.fillText('moonbootsconsultancy.net', padding, height - padding - 10);
 
   return canvas.toDataURL('image/png');
 }
 
 /**
- * Generate a question hook image
+ * Generate a question hook image with the question and supporting context
  */
 export function generateQuestionImage({ question, platform = 'instagram', style = 'gradient' }) {
   const canvas = document.createElement('canvas');
@@ -191,44 +220,64 @@ export function generateQuestionImage({ question, platform = 'instagram', style 
   }
   ctx.fillRect(0, 0, width, height);
 
-  const padding = Math.min(width, height) * 0.055;
+  const padding = Math.min(width, height) * 0.07;
   const logoY = padding + 30;
 
   // Draw logo
-  drawMoonLogo(ctx, padding + 14, logoY, config);
+  drawMoonLogo(ctx, padding + 14, logoY, config, 16);
   ctx.fillStyle = config.text;
-  ctx.font = '600 28px system-ui, -apple-system, sans-serif';
-  ctx.fillText('moonboots', padding + 42, logoY + 8);
+  ctx.font = '600 32px system-ui, -apple-system, sans-serif';
+  ctx.fillText('moonboots', padding + 46, logoY + 10);
+
+  // Parse question and body (if present)
+  const parts = question.split('\n\n');
+  const mainQuestion = parts[0] || question;
+  const body = parts.slice(1).join('\n\n');
 
   const contentArea = {
     x: padding,
-    y: logoY + 60,
+    y: logoY + 80,
     width: width - padding * 2,
-    height: height - logoY - 120
+    height: height - logoY - 160
   };
 
-  // Question text
-  const fontSize = Math.min(width, height) * 0.045;
-  ctx.font = `600 ${fontSize}px system-ui`;
-  const lines = wrapText(ctx, question, contentArea.width);
-  const totalHeight = lines.length * fontSize * 1.3;
-  let y = contentArea.y + (contentArea.height - totalHeight) / 2 + fontSize;
+  // Question text - larger, bolder
+  const questionFontSize = Math.min(width, height) * 0.055;
+  ctx.font = `700 ${questionFontSize}px system-ui`;
   ctx.fillStyle = config.text;
-  lines.forEach(line => {
+  const questionLines = wrapText(ctx, mainQuestion, contentArea.width);
+  const maxQuestionLines = 4;
+
+  let y = contentArea.y + questionFontSize;
+  questionLines.slice(0, maxQuestionLines).forEach(line => {
     ctx.fillText(line, contentArea.x, y);
-    y += fontSize * 1.3;
+    y += questionFontSize * 1.25;
   });
 
-  // Question mark accent
+  // Body text if present
+  if (body) {
+    y += questionFontSize * 0.5;
+    const bodyFontSize = Math.min(width, height) * 0.035;
+    ctx.font = `400 ${bodyFontSize}px system-ui`;
+    ctx.fillStyle = config.accent;
+    const bodyLines = wrapText(ctx, body, contentArea.width);
+    bodyLines.slice(0, 5).forEach(line => {
+      if (y > height - padding - 60) return;
+      ctx.fillText(line, contentArea.x, y);
+      y += bodyFontSize * 1.4;
+    });
+  }
+
+  // Question mark accent (subtle background)
   ctx.fillStyle = config.accent;
-  ctx.globalAlpha = 0.15;
-  ctx.font = `900 ${height * 0.6}px system-ui`;
-  ctx.fillText('?', width - height * 0.35, height * 0.7);
+  ctx.globalAlpha = 0.1;
+  ctx.font = `900 ${height * 0.5}px system-ui`;
+  ctx.fillText('?', width - height * 0.3, height * 0.65);
   ctx.globalAlpha = 1;
 
   // Footer
   ctx.fillStyle = config.accent;
-  ctx.font = '400 22px system-ui, -apple-system, sans-serif';
+  ctx.font = '400 24px system-ui, -apple-system, sans-serif';
   ctx.fillText('moonbootsconsultancy.net', padding, height - padding - 10);
 
   return canvas.toDataURL('image/png');
@@ -236,45 +285,87 @@ export function generateQuestionImage({ question, platform = 'instagram', style 
 
 /**
  * Extract key content from a post for image generation
- * Returns the most impactful part of the content
+ * Returns headline and supporting body text
  */
-function extractKeyContent(content) {
-  // Split into sentences/lines
-  const lines = content.split(/[.\n]+/).map(s => s.trim()).filter(s => s.length > 0);
+function extractKeyContent(content, options = {}) {
+  const { maxHeadlineLength = 120, includeBody = true } = options;
 
-  // Find the hook/headline (usually first meaningful line)
-  let headline = lines[0] || content.substring(0, 80);
+  // Split by double newlines first (paragraphs), then by sentences
+  const paragraphs = content.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
 
-  // If headline is too long, try to find a shorter impactful line
-  if (headline.length > 80) {
-    // Look for a shorter punchy line
-    const shortLine = lines.find(l => l.length >= 20 && l.length <= 80);
-    if (shortLine) headline = shortLine;
-    else headline = headline.substring(0, 77) + '...';
+  // Get headline from first paragraph
+  let headline = paragraphs[0] || content;
+
+  // If headline contains a sentence break, take just the first sentence
+  const firstSentence = headline.split(/[.!?]\s/)[0];
+  if (firstSentence.length >= 30 && firstSentence.length <= maxHeadlineLength) {
+    headline = firstSentence;
+  } else if (headline.length > maxHeadlineLength) {
+    headline = headline.substring(0, maxHeadlineLength - 3) + '...';
   }
 
-  return headline;
+  if (!includeBody) {
+    return headline;
+  }
+
+  // Get body from remaining paragraphs or remaining content
+  let body = '';
+  if (paragraphs.length > 1) {
+    // Use second paragraph as body
+    body = paragraphs[1];
+    // Add third paragraph if short enough
+    if (paragraphs[2] && body.length + paragraphs[2].length < 300) {
+      body += '\n\n' + paragraphs[2];
+    }
+  } else if (headline !== content) {
+    // Get remaining content after headline
+    const remaining = content.substring(headline.length).trim();
+    if (remaining.length > 10) {
+      body = remaining.substring(0, 250);
+    }
+  }
+
+  // Clean up body - remove hashtags and excessive punctuation
+  body = body.replace(/#\w+/g, '').replace(/\s+/g, ' ').trim();
+
+  return headline + (body ? '\n\n' + body : '');
 }
 
 /**
- * Extract stat and brief context from content
+ * Extract stat and meaningful context from content
  */
 function extractStatContent(content, statMatch) {
   const stat = statMatch[0];
+  const paragraphs = content.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
   const lines = content.split(/[.\n]+/).map(s => s.trim()).filter(s => s.length > 0);
 
   // Find the line containing the stat
   const statLine = lines.find(l => l.includes(stat)) || '';
 
-  // Get context - the sentence with the stat, cleaned up
-  let context = statLine.replace(stat, '').replace(/^[•\-\s]+/, '').trim();
+  // Build context: stat line description + supporting content
+  let context = statLine.replace(stat, '').replace(/^[•\-\s:]+/, '').trim();
 
-  // If context is too long or empty, try to get a better one
-  if (context.length > 100) {
-    context = context.substring(0, 97) + '...';
-  } else if (context.length < 10) {
-    // Use headline as context instead
-    context = extractKeyContent(content.replace(statLine, ''));
+  // Add more context from other paragraphs
+  if (paragraphs.length > 1) {
+    // Find paragraph that doesn't contain the stat for additional context
+    const additionalContext = paragraphs.find(p => !p.includes(stat) && p.length > 20);
+    if (additionalContext && context.length + additionalContext.length < 280) {
+      context = context + (context ? '\n\n' : '') + additionalContext;
+    }
+  }
+
+  // If still short, add the headline
+  if (context.length < 30) {
+    const headline = paragraphs[0] || lines[0] || '';
+    if (!headline.includes(stat)) {
+      context = headline + (context ? '\n\n' + context : '');
+    }
+  }
+
+  // Clean up and limit
+  context = context.replace(/#\w+/g, '').trim();
+  if (context.length > 300) {
+    context = context.substring(0, 297) + '...';
   }
 
   return { stat, context };

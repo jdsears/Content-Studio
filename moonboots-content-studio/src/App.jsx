@@ -177,6 +177,7 @@ const ContentGenerator = ({
   const [generatedImages, setGeneratedImages] = useState({});
   const [autoGenerateImages, setAutoGenerateImages] = useState(true);
   const [generatingImages, setGeneratingImages] = useState({});
+  const [previewImage, setPreviewImage] = useState(null); // Platform being previewed
   // Per-platform image settings: { platform: { mode: 'template'|'ai', template: 'auto'|'quote'|'stat'|'question', style: 'gradient'|'vibrant'|'dark' } }
   const [imageSettings, setImageSettings] = useState({
     linkedin: { mode: 'template', template: 'auto', style: 'gradient' },
@@ -700,40 +701,45 @@ const ContentGenerator = ({
               </div>
 
               {/* Content and Image Preview */}
-              <div className={generatedImages[platform] ? 'flex gap-4' : ''}>
+              <div className="flex gap-4">
                 <div className="flex-1">
                   <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
                 </div>
 
-                {/* Image Preview */}
-                {(generatedImages[platform] || generatingImages[platform]) && (
-                  <div className="flex-shrink-0">
-                    {generatingImages[platform] ? (
-                      <div className="w-32 h-40 bg-slate-800/50 rounded-lg flex flex-col items-center justify-center gap-2">
-                        <div className={`w-6 h-6 border-2 rounded-full animate-spin ${imageSettings[platform]?.mode === 'ai' ? 'border-emerald-500/30 border-t-emerald-500' : 'border-violet-500/30 border-t-violet-500'}`} />
-                        <span className="text-[10px] text-slate-500">
-                          {imageSettings[platform]?.mode === 'ai' ? 'AI generating...' : 'Creating...'}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="relative group">
-                        <img
-                          src={generatedImages[platform]}
-                          alt={`${platform} preview`}
-                          className="w-32 h-auto rounded-lg border border-slate-700/50"
-                        />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex flex-col items-center justify-center gap-2 p-2">
-                          <button
-                            onClick={() => handleGenerateImage(platform)}
-                            className="p-1.5 bg-white/20 rounded text-white text-xs hover:bg-white/30"
-                            title="Regenerate"
-                          >
-                            ↻ Regenerate
-                          </button>
-                          <div className="flex items-center gap-1">
+                {/* Image Preview with Enlarged View */}
+                <div className="flex-shrink-0 flex gap-3">
+                  {/* Thumbnail */}
+                  {(generatedImages[platform] || generatingImages[platform]) && (
+                    <div>
+                      {generatingImages[platform] ? (
+                        <div className="w-24 h-32 bg-slate-800/50 rounded-lg flex flex-col items-center justify-center gap-2">
+                          <div className={`w-5 h-5 border-2 rounded-full animate-spin ${imageSettings[platform]?.mode === 'ai' ? 'border-emerald-500/30 border-t-emerald-500' : 'border-violet-500/30 border-t-violet-500'}`} />
+                          <span className="text-[9px] text-slate-500">
+                            {imageSettings[platform]?.mode === 'ai' ? 'AI...' : 'Creating...'}
+                          </span>
+                        </div>
+                      ) : (
+                        <div
+                          className="relative cursor-pointer"
+                          onMouseEnter={() => setPreviewImage(platform)}
+                          onMouseLeave={() => setPreviewImage(null)}
+                        >
+                          <img
+                            src={generatedImages[platform]}
+                            alt={`${platform} preview`}
+                            className="w-24 h-auto rounded-lg border border-slate-700/50 hover:border-violet-500/50 transition-colors"
+                          />
+                          <div className="absolute bottom-1 right-1 flex gap-0.5">
                             <button
-                              onClick={() => setGeneratedImages(prev => ({ ...prev, [platform]: null }))}
-                              className="p-1 bg-white/20 rounded text-white text-[10px] hover:bg-white/30"
+                              onClick={(e) => { e.stopPropagation(); handleGenerateImage(platform); }}
+                              className="p-1 bg-black/70 rounded text-white text-[9px] hover:bg-black/90"
+                              title="Regenerate"
+                            >
+                              ↻
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setGeneratedImages(prev => ({ ...prev, [platform]: null })); }}
+                              className="p-1 bg-black/70 rounded text-white text-[9px] hover:bg-black/90"
                               title="Remove"
                             >
                               ✕
@@ -741,27 +747,39 @@ const ContentGenerator = ({
                             <a
                               href={generatedImages[platform]}
                               download={`moonboots-${platform}-${Date.now()}.png`}
-                              className="p-1 bg-white/20 rounded text-white text-[10px] hover:bg-white/30"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 bg-black/70 rounded text-white text-[9px] hover:bg-black/90"
                               title="Download"
                             >
                               ↓
                             </a>
                           </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </div>
+                  )}
 
-                {/* Generate Image Button (if no image and auto is off) */}
-                {!generatedImages[platform] && !generatingImages[platform] && !autoGenerateImages && (
-                  <button
-                    onClick={() => handleGenerateImage(platform)}
-                    className="flex-shrink-0 px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700"
-                  >
-                    + Generate Image
-                  </button>
-                )}
+                  {/* Enlarged Preview */}
+                  {previewImage === platform && generatedImages[platform] && (
+                    <div className="w-64 flex-shrink-0 animate-in fade-in duration-200">
+                      <img
+                        src={generatedImages[platform]}
+                        alt={`${platform} enlarged preview`}
+                        className="w-full h-auto rounded-lg border border-slate-600 shadow-xl"
+                      />
+                    </div>
+                  )}
+
+                  {/* Generate Image Button (if no image and auto is off) */}
+                  {!generatedImages[platform] && !generatingImages[platform] && !autoGenerateImages && (
+                    <button
+                      onClick={() => handleGenerateImage(platform)}
+                      className="px-3 py-2 text-xs bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 border border-slate-700 h-fit"
+                    >
+                      + Generate Image
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}
