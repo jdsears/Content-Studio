@@ -225,7 +225,9 @@ const getNextTimeSlots = (platform, count = 5) => {
 const generateAIImage = async (content, platform, apiKey) => {
   // Extract the main idea from the content for the prompt
   const firstLine = content.split('\n')[0].trim();
-  const prompt = `Professional, modern social media graphic for ${platform}. Abstract, minimalist design representing the concept: "${firstLine}". Use subtle gradients, geometric shapes, and a sophisticated dark color palette. No text in the image. High quality, clean aesthetic suitable for business/professional audience.`;
+  // Remove any quotes or special chars that might confuse the prompt
+  const cleanConcept = firstLine.replace(/["""'']/g, '').substring(0, 100);
+  const prompt = `Abstract minimalist artwork. Geometric shapes, subtle gradients, sophisticated dark blue and slate color palette. The visual mood should evoke: ${cleanConcept}. IMPORTANT: Do NOT include any text, words, letters, numbers, typography, writing, labels, or captions anywhere in the image. Pure abstract visual art only. Clean, professional, high quality.`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/images/generations', {
