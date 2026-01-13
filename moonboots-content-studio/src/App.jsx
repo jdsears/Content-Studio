@@ -334,13 +334,49 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
   const handleGenerate = async () => {
     setGenerating(true);
     setGeneratedImages({});
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    setGeneratedContent(null);
 
-    const content = {
-      linkedin: `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`,
-      x: `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`,
-      instagram: `${topic}\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`,
-    };
+    let content;
+
+    // Use Claude API if key is configured, otherwise use fallback
+    if (settings.claudeApiKey) {
+      try {
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey: settings.claudeApiKey,
+            topic,
+            pillar: pillars.find(p => p.id === selectedPillar)?.name,
+            platforms,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to generate content');
+        }
+
+        content = data.content;
+      } catch (error) {
+        console.error('Content generation failed:', error);
+        alert(`Failed to generate content: ${error.message}. Using fallback templates.`);
+        // Fallback to templates
+        content = {
+          linkedin: `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`,
+          x: `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`,
+          instagram: `${topic}\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`,
+        };
+      }
+    } else {
+      // No API key - use fallback templates
+      content = {
+        linkedin: `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`,
+        x: `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`,
+        instagram: `${topic}\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`,
+      };
+    }
 
     setGeneratedContent(content);
 
