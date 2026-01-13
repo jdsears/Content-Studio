@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -70,24 +70,175 @@ const TabButton = ({ active, onClick, children, count }) => (
   </button>
 );
 
-// Content Generator with optimal timing
-const ContentGenerator = ({ onGenerate, insights }) => {
+// Generate template-based image using canvas
+const generateTemplateImage = (content, template, platform) => {
+  const canvas = document.createElement('canvas');
+  const size = platform === 'instagram' ? 1080 : 1200;
+  const height = platform === 'x' ? 675 : size;
+  canvas.width = size;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  // Extract headline and body from content
+  const lines = content.split('\n').filter(l => l.trim());
+  const headline = lines[0] || '';
+  const body = lines.slice(1).join(' ').substring(0, 200);
+
+  // Template styles
+  const templates = {
+    quote: {
+      gradient: ['#0f172a', '#1e3a5f'],
+      accent: '#3b82f6',
+    },
+    stat: {
+      gradient: ['#1a1a2e', '#16213e'],
+      accent: '#10b981',
+    },
+    question: {
+      gradient: ['#1f1f1f', '#2d2d2d'],
+      accent: '#f59e0b',
+    },
+    insight: {
+      gradient: ['#0c0c0c', '#1a1a1a'],
+      accent: '#8b5cf6',
+    },
+  };
+
+  const t = templates[template] || templates.quote;
+
+  // Draw gradient background
+  const grd = ctx.createLinearGradient(0, 0, size, height);
+  grd.addColorStop(0, t.gradient[0]);
+  grd.addColorStop(1, t.gradient[1]);
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, size, height);
+
+  // Add subtle pattern
+  ctx.globalAlpha = 0.03;
+  for (let i = 0; i < size; i += 30) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + height, height);
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Draw accent line
+  ctx.fillStyle = t.accent;
+  ctx.fillRect(60, 80, 6, 100);
+
+  // Draw logo
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(size - 100, 80, 20, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = t.gradient[0];
+  ctx.beginPath();
+  ctx.arc(size - 93, 80, 14, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.font = 'bold 16px system-ui';
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('moonboots', size - 200, 86);
+
+  // Draw headline
+  ctx.font = `bold ${Math.round(size * 0.055)}px system-ui`;
+  ctx.fillStyle = '#ffffff';
+  const headlineLines = wrapText(ctx, headline, size - 160);
+  let y = 220;
+  headlineLines.slice(0, 3).forEach(line => {
+    ctx.fillText(line, 80, y);
+    y += size * 0.07;
+  });
+
+  // Draw body text
+  if (body) {
+    ctx.font = `${Math.round(size * 0.035)}px system-ui`;
+    ctx.fillStyle = '#94a3b8';
+    const bodyLines = wrapText(ctx, body, size - 160);
+    y += 20;
+    bodyLines.slice(0, 6).forEach(line => {
+      ctx.fillText(line, 80, y);
+      y += size * 0.045;
+    });
+  }
+
+  // Footer
+  ctx.font = '14px system-ui';
+  ctx.fillStyle = '#64748b';
+  ctx.fillText('moonbootsconsultancy.net', 80, height - 50);
+
+  return canvas.toDataURL('image/png');
+};
+
+// Text wrapping helper
+const wrapText = (ctx, text, maxWidth) => {
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+
+  words.forEach(word => {
+    const testLine = currentLine + (currentLine ? ' ' : '') + word;
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  });
+  if (currentLine) lines.push(currentLine);
+  return lines;
+};
+
+// Content Generator with optimal timing and images
+const ContentGenerator = ({ onGenerate, insights, settings }) => {
   const [topic, setTopic] = useState('');
   const [selectedPillar, setSelectedPillar] = useState('ai');
   const [platforms, setPlatforms] = useState({ linkedin: true, x: true, instagram: false });
   const [generating, setGenerating] = useState(false);
   const [generatedContent, setGeneratedContent] = useState(null);
+  const [generatedImages, setGeneratedImages] = useState({});
+  const [generatingImages, setGeneratingImages] = useState({});
   const [useOptimalTiming, setUseOptimalTiming] = useState(true);
+  const [imageTemplate, setImageTemplate] = useState('quote');
 
   const handleGenerate = async () => {
     setGenerating(true);
+    setGeneratedImages({});
     await new Promise(resolve => setTimeout(resolve, 2000));
-    setGeneratedContent({
+
+    const content = {
       linkedin: `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`,
       x: `${topic}\n\nMost get this wrong.\n\nThey start with tools. They should start with problems.\n\nClarity > complexity. Every time.`,
-      instagram: `${topic} ✨\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`,
+      instagram: `${topic}\n\nAfter years of working with founders on this, one thing is clear:\n\nThe best technology serves people—not the other way around.\n\n#Strategy #AI #Innovation #Leadership`,
+    };
+
+    setGeneratedContent(content);
+
+    // Auto-generate images for each platform
+    Object.keys(platforms).forEach(platform => {
+      if (platforms[platform] && content[platform]) {
+        setGeneratingImages(prev => ({ ...prev, [platform]: true }));
+        setTimeout(() => {
+          const imageUrl = generateTemplateImage(content[platform], imageTemplate, platform);
+          setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+          setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+        }, 500 + Math.random() * 1000);
+      }
     });
+
     setGenerating(false);
+  };
+
+  const handleRegenerateImage = (platform, content) => {
+    setGeneratingImages(prev => ({ ...prev, [platform]: true }));
+    setTimeout(() => {
+      const imageUrl = generateTemplateImage(content, imageTemplate, platform);
+      setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+      setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+    }, 800);
   };
 
   const handleAddToQueue = (platform) => {
@@ -98,8 +249,10 @@ const ContentGenerator = ({ onGenerate, insights }) => {
         platform,
         pillar: pillars.find(p => p.id === selectedPillar)?.name,
         suggestedTime: optimalSlot ? `${optimalSlot.day} ${optimalSlot.hour}:00` : null,
+        image: generatedImages[platform] || null,
       });
       setGeneratedContent(prev => ({ ...prev, [platform]: null }));
+      setGeneratedImages(prev => ({ ...prev, [platform]: null }));
     }
   };
 
@@ -108,7 +261,7 @@ const ContentGenerator = ({ onGenerate, insights }) => {
       {insights?.optimal && (
         <div className="p-4 bg-blue-900/20 rounded-xl border border-blue-800/30">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium text-blue-300">🎯 Your Optimal Posting Windows</h4>
+            <h4 className="text-sm font-medium text-blue-300">Your Optimal Posting Windows</h4>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0" />
               <span className="text-xs text-slate-400">Auto-schedule</span>
@@ -154,8 +307,19 @@ const ContentGenerator = ({ onGenerate, insights }) => {
         </div>
       </div>
 
+      <div>
+        <label className="block text-sm text-slate-400 mb-2">Image template</label>
+        <div className="flex gap-2">
+          {['quote', 'stat', 'question', 'insight'].map(t => (
+            <button key={t} onClick={() => setImageTemplate(t)} className={`px-3 py-1.5 text-sm rounded-lg border capitalize ${imageTemplate === t ? 'bg-white text-slate-900' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}>
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <button onClick={handleGenerate} disabled={!topic || generating} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-        {generating ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Generating...</> : <>✨ Generate Content</>}
+        {generating ? <><div className="w-4 h-4 border-2 border-slate-400 border-t-slate-900 rounded-full animate-spin" />Generating...</> : <>Generate Content</>}
       </button>
 
       {generatedContent && (
@@ -171,7 +335,31 @@ const ContentGenerator = ({ onGenerate, insights }) => {
                 </div>
                 <button onClick={() => handleAddToQueue(platform)} className="px-3 py-1 text-xs bg-white text-slate-900 rounded hover:bg-slate-100">Add to Queue</button>
               </div>
-              <p className="text-sm text-slate-300 whitespace-pre-wrap">{content}</p>
+
+              <div className="flex gap-4">
+                <p className="text-sm text-slate-300 whitespace-pre-wrap flex-1">{content}</p>
+
+                {/* Image preview */}
+                <div className="flex-shrink-0">
+                  {generatingImages[platform] ? (
+                    <div className="w-32 h-32 bg-slate-700/50 rounded-lg flex items-center justify-center">
+                      <div className="w-5 h-5 border-2 border-slate-500 border-t-white rounded-full animate-spin" />
+                    </div>
+                  ) : generatedImages[platform] ? (
+                    <div className="relative group">
+                      <img src={generatedImages[platform]} alt="Preview" className="w-32 h-32 object-cover rounded-lg" />
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
+                        <button onClick={() => handleRegenerateImage(platform, content)} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Regenerate">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                        </button>
+                        <a href={generatedImages[platform]} download={`${platform}-image.png`} className="p-1.5 bg-white/20 rounded hover:bg-white/30" title="Download">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        </a>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -191,7 +379,7 @@ const InsightsDashboard = ({ performance }) => {
 
     performance.forEach(post => {
       const engagement = post.likes + post.comments * 2 + post.shares * 3;
-      
+
       if (!platformData[post.platform]) platformData[post.platform] = { posts: 0, engagement: 0, leads: 0 };
       platformData[post.platform].posts++;
       platformData[post.platform].engagement += engagement;
@@ -252,14 +440,14 @@ const InsightsDashboard = ({ performance }) => {
     const sortedPillars = Object.entries(insights.pillarData).sort((a, b) => b[1].avgEngagement - a[1].avgEngagement);
     if (sortedPillars.length > 1) {
       const diff = Math.round((sortedPillars[0][1].avgEngagement / sortedPillars[sortedPillars.length-1][1].avgEngagement - 1) * 100);
-      recs.push({ icon: '🎯', text: `"${sortedPillars[0][0]}" content gets ${diff}% more engagement than other pillars` });
+      recs.push({ icon: 'target', text: `"${sortedPillars[0][0]}" content gets ${diff}% more engagement than other pillars` });
     }
     const sortedDays = Object.entries(insights.dayData).sort((a, b) => b[1].avgEngagement - a[1].avgEngagement);
-    if (sortedDays.length > 0) recs.push({ icon: '⏰', text: `${sortedDays[0][0]}s are your best day (${sortedDays[0][1].avgEngagement} avg engagement)` });
+    if (sortedDays.length > 0) recs.push({ icon: 'clock', text: `${sortedDays[0][0]}s are your best day (${sortedDays[0][1].avgEngagement} avg engagement)` });
     const sortedHours = Object.entries(insights.hourData).sort((a, b) => b[1].avgEngagement - a[1].avgEngagement);
-    if (sortedHours.length > 0) recs.push({ icon: '🕐', text: `Posts at ${sortedHours[0][0]}:00 perform best` });
+    if (sortedHours.length > 0) recs.push({ icon: 'time', text: `Posts at ${sortedHours[0][0]}:00 perform best` });
     const leadPillar = Object.entries(insights.pillarData).sort((a, b) => b[1].leads - a[1].leads)[0];
-    if (leadPillar?.[1].leads > 0) recs.push({ icon: '💼', text: `"${leadPillar[0]}" generates the most leads (${leadPillar[1].leads} total)` });
+    if (leadPillar?.[1].leads > 0) recs.push({ icon: 'briefcase', text: `"${leadPillar[0]}" generates the most leads (${leadPillar[1].leads} total)` });
     return recs;
   }, [insights]);
 
@@ -362,11 +550,11 @@ const InsightsDashboard = ({ performance }) => {
 
       {/* Learning Insights */}
       <div>
-        <h3 className="text-sm font-medium text-slate-300 mb-4">🧠 Learning Insights</h3>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Learning Insights</h3>
         <div className="p-4 bg-gradient-to-br from-blue-900/30 to-slate-800/50 rounded-xl border border-blue-800/30 space-y-3">
           {recommendations.map((rec, i) => (
             <div key={i} className="flex items-start gap-3">
-              <span className="text-lg">{rec.icon}</span>
+              <span className="text-slate-400 text-sm">&bull;</span>
               <p className="text-sm text-slate-300">{rec.text}</p>
             </div>
           ))}
@@ -395,11 +583,13 @@ const InsightsDashboard = ({ performance }) => {
   );
 };
 
-// Approval Queue
-const ApprovalQueue = ({ posts, onApprove, onReject }) => {
+// Approval Queue with images
+const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage }) => {
   const pending = posts.filter(p => p.status === 'pending');
+  const [expandedImage, setExpandedImage] = useState(null);
+
   if (pending.length === 0) return <div className="text-center py-12"><div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 flex items-center justify-center text-2xl">✓</div><p className="text-slate-400">No posts awaiting approval</p></div>;
-  
+
   return (
     <div className="space-y-4">
       {pending.map(post => (
@@ -412,15 +602,58 @@ const ApprovalQueue = ({ posts, onApprove, onReject }) => {
             </div>
             <StatusBadge status={post.status} />
           </div>
-          <p className="text-slate-200 text-sm whitespace-pre-wrap mb-4">{post.content}</p>
-          {post.suggestedTime && <p className="text-xs text-blue-400 mb-4">🎯 Optimal time: {post.suggestedTime}</p>}
+
+          <div className="flex gap-4 mb-4">
+            <p className="text-slate-200 text-sm whitespace-pre-wrap flex-1">{post.content}</p>
+
+            {/* Image preview in queue */}
+            {post.image && (
+              <div className="flex-shrink-0">
+                <div
+                  className="relative cursor-pointer group"
+                  onClick={() => setExpandedImage(post.image)}
+                >
+                  <img src={post.image} alt="Post image" className="w-24 h-24 object-cover rounded-lg" />
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                    <span className="text-xs text-white">Click to expand</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => onRemoveImage(post.id)}
+                  className="mt-1 text-xs text-slate-500 hover:text-red-400 w-full text-center"
+                >
+                  Remove image
+                </button>
+              </div>
+            )}
+          </div>
+
+          {post.suggestedTime && <p className="text-xs text-blue-400 mb-4">Optimal time: {post.suggestedTime}</p>}
           <div className="flex items-center gap-2">
-            <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">✓ Approve</button>
-            <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">✎ Edit</button>
-            <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">✕ Reject</button>
+            <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">Approve</button>
+            <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
+            <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">Reject</button>
           </div>
         </div>
       ))}
+
+      {/* Image modal */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-8"
+          onClick={() => setExpandedImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-full">
+            <img src={expandedImage} alt="Expanded" className="max-w-full max-h-[90vh] rounded-lg" />
+            <button
+              onClick={() => setExpandedImage(null)}
+              className="absolute top-4 right-4 p-2 bg-black/50 rounded-full hover:bg-black/70"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -446,6 +679,7 @@ const CalendarView = ({ posts }) => {
           <div key={post.id} className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg mb-2">
             <PlatformIcon platform={post.platform} className="w-4 h-4 text-slate-400" />
             <p className="text-sm text-slate-300 truncate flex-1">{post.content.substring(0, 50)}...</p>
+            {post.image && <div className="w-8 h-8 rounded overflow-hidden flex-shrink-0"><img src={post.image} alt="" className="w-full h-full object-cover" /></div>}
             <span className="text-xs text-slate-500">{post.scheduledFor}</span>
           </div>
         ))}
@@ -487,54 +721,224 @@ const QuoteCardMaker = () => {
           <div className={`text-sm ${s.accent}`}>moonbootsconsultancy.net</div>
         </div>
       </div>
-      <button disabled={!quote} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">↓ Download Image</button>
+      <button disabled={!quote} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">Download Image</button>
     </div>
   );
 };
 
-// Settings
-const SettingsPanel = () => (
-  <div className="space-y-6">
-    <div>
-      <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
-      <div className="space-y-3">
-        {[{ p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Buffer' }, { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Buffer' }, { p: 'x', label: 'X (Twitter)', sub: 'Manual posting only', manual: true }].map(({ p, label, sub, manual }) => (
-          <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-            <div className="flex items-center gap-3">
-              <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
-              <div><p className="text-sm text-white">{label}</p><p className={`text-xs ${manual ? 'text-yellow-500' : 'text-slate-500'}`}>{sub}</p></div>
+// Settings Panel with localStorage persistence
+const SettingsPanel = ({ settings, onSettingsChange }) => {
+  const [localSettings, setLocalSettings] = useState(settings);
+  const [saveStatus, setSaveStatus] = useState('');
+
+  const handleChange = (key, value) => {
+    const newSettings = { ...localSettings, [key]: value };
+    setLocalSettings(newSettings);
+  };
+
+  const handleSave = () => {
+    onSettingsChange(localSettings);
+    setSaveStatus('saved');
+    setTimeout(() => setSaveStatus(''), 2000);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-medium text-white">Settings</h2>
+        <div className="flex items-center gap-3">
+          {saveStatus === 'saved' && <span className="text-sm text-green-400">Settings saved!</span>}
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 text-sm bg-white text-slate-900 rounded-lg hover:bg-slate-100"
+          >
+            Save Settings
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
+        <div className="space-y-3">
+          {[
+            { p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Publer' },
+            { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Publer' },
+            { p: 'x', label: 'X (Twitter)', sub: 'Manual posting only', manual: true }
+          ].map(({ p, label, sub, manual }) => (
+            <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+              <div className="flex items-center gap-3">
+                <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
+                <div><p className="text-sm text-white">{label}</p><p className={`text-xs ${manual ? 'text-yellow-500' : 'text-slate-500'}`}>{sub}</p></div>
+              </div>
+              {manual ? <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span> : <button className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Connect</button>}
             </div>
-            {manual ? <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span> : <button className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Connect</button>}
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Publer Integration</h3>
+        <div className="space-y-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Publer API Key</label>
+            <input
+              type="password"
+              value={localSettings.publerApiKey || ''}
+              onChange={(e) => handleChange('publerApiKey', e.target.value)}
+              placeholder="Enter your Publer API key"
+              className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+            />
+            <p className="text-xs text-slate-500 mt-1">Get your API key from publer.io/settings/api</p>
           </div>
-        ))}
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Workspace ID</label>
+            <input
+              type="text"
+              value={localSettings.publerWorkspaceId || ''}
+              onChange={(e) => handleChange('publerWorkspaceId', e.target.value)}
+              placeholder="Enter your Publer workspace ID"
+              className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="autoSchedule"
+              checked={localSettings.autoSchedule || false}
+              onChange={(e) => handleChange('autoSchedule', e.target.checked)}
+              className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0"
+            />
+            <label htmlFor="autoSchedule" className="text-sm text-slate-300 cursor-pointer">
+              Auto-schedule posts to optimal times
+            </label>
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="includeImages"
+              checked={localSettings.includeImages !== false}
+              onChange={(e) => handleChange('includeImages', e.target.checked)}
+              className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0"
+            />
+            <label htmlFor="includeImages" className="text-sm text-slate-300 cursor-pointer">
+              Include generated images with posts
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">OpenAI API Key (for AI images)</label>
+            <input
+              type="password"
+              value={localSettings.openaiApiKey || ''}
+              onChange={(e) => handleChange('openaiApiKey', e.target.value)}
+              placeholder="sk-..."
+              className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Claude API Key (for content generation)</label>
+            <input
+              type="password"
+              value={localSettings.claudeApiKey || ''}
+              onChange={(e) => handleChange('claudeApiKey', e.target.value)}
+              placeholder="sk-ant-..."
+              className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Default Preferences</h3>
+        <div className="space-y-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Default Image Template</label>
+            <select
+              value={localSettings.defaultTemplate || 'quote'}
+              onChange={(e) => handleChange('defaultTemplate', e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
+            >
+              <option value="quote">Quote</option>
+              <option value="stat">Stat</option>
+              <option value="question">Question</option>
+              <option value="insight">Insight</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Default Content Pillar</label>
+            <select
+              value={localSettings.defaultPillar || 'ai'}
+              onChange={(e) => handleChange('defaultPillar', e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
+            >
+              {pillars.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
     </div>
-    <div>
-      <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
-      <div className="space-y-3">
-        <div><label className="text-xs text-slate-500 mb-1 block">Buffer API Key</label><input type="password" placeholder="Enter your Buffer API key" className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none" /></div>
-        <div><label className="text-xs text-slate-500 mb-1 block">Claude API Key</label><input type="password" placeholder="Enter your Claude API key" className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none" /></div>
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 // Main App
 export default function ContentStudio() {
   const [activeTab, setActiveTab] = useState('generate');
   const [posts, setPosts] = useState([
-    { id: 1, content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00' },
-    { id: 2, content: "Web3 doesn't need more hype. It needs more builders.", platform: 'x', status: 'pending', pillar: 'Web3', createdAt: '2025-01-12', scheduledFor: null },
-    { id: 3, content: "Athletes have millions of followers but don't own the relationship.", platform: 'instagram', status: 'approved', pillar: 'Community Building', createdAt: '2025-01-11', scheduledFor: '2025-01-13 12:00' },
+    { id: 1, content: "The best AI strategy isn't about the technology...", platform: 'linkedin', status: 'pending', pillar: 'AI Strategy', createdAt: '2025-01-12', scheduledFor: '2025-01-14 09:00', image: null },
+    { id: 2, content: "Web3 doesn't need more hype. It needs more builders.", platform: 'x', status: 'pending', pillar: 'Web3', createdAt: '2025-01-12', scheduledFor: null, image: null },
+    { id: 3, content: "Athletes have millions of followers but don't own the relationship.", platform: 'instagram', status: 'approved', pillar: 'Community Building', createdAt: '2025-01-11', scheduledFor: '2025-01-13 12:00', image: null },
   ]);
   const [performance] = useState(historicalPerformance);
+
+  // Settings with localStorage persistence
+  const [settings, setSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('contentStudioSettings');
+      return saved ? JSON.parse(saved) : {
+        publerApiKey: '',
+        publerWorkspaceId: '',
+        openaiApiKey: '',
+        claudeApiKey: '',
+        autoSchedule: true,
+        includeImages: true,
+        defaultTemplate: 'quote',
+        defaultPillar: 'ai',
+      };
+    } catch {
+      return {
+        publerApiKey: '',
+        publerWorkspaceId: '',
+        openaiApiKey: '',
+        claudeApiKey: '',
+        autoSchedule: true,
+        includeImages: true,
+        defaultTemplate: 'quote',
+        defaultPillar: 'ai',
+      };
+    }
+  });
+
+  // Save settings to localStorage when they change
+  const handleSettingsChange = (newSettings) => {
+    setSettings(newSettings);
+    try {
+      localStorage.setItem('contentStudioSettings', JSON.stringify(newSettings));
+    } catch (e) {
+      console.error('Failed to save settings:', e);
+    }
+  };
 
   const insights = useMemo(() => {
     const optimal = {};
     ['linkedin', 'x', 'instagram'].forEach(platform => {
-      const posts = performance.filter(p => p.platform === platform);
-      if (posts.length > 0) {
-        const best = posts.reduce((a, b) => (a.likes + a.comments * 2 + a.shares * 3) > (b.likes + b.comments * 2 + b.shares * 3) ? a : b);
+      const platformPosts = performance.filter(p => p.platform === platform);
+      if (platformPosts.length > 0) {
+        const best = platformPosts.reduce((a, b) => (a.likes + a.comments * 2 + a.shares * 3) > (b.likes + b.comments * 2 + b.shares * 3) ? a : b);
         optimal[platform] = { day: best.dayOfWeek, hour: best.hour };
       }
     });
@@ -542,8 +946,18 @@ export default function ContentStudio() {
   }, [performance]);
 
   const handleGenerate = (newPost) => {
-    setPosts(prev => [...prev, { ...newPost, id: Date.now(), status: 'pending', createdAt: new Date().toISOString().split('T')[0], scheduledFor: null }]);
+    setPosts(prev => [...prev, {
+      ...newPost,
+      id: Date.now(),
+      status: 'pending',
+      createdAt: new Date().toISOString().split('T')[0],
+      scheduledFor: null
+    }]);
     setActiveTab('queue');
+  };
+
+  const handleRemoveImage = (postId) => {
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, image: null } : p));
   };
 
   const pendingCount = posts.filter(p => p.status === 'pending').length;
@@ -562,23 +976,23 @@ export default function ContentStudio() {
 
       <nav className="border-b border-slate-800/50">
         <div className="max-w-5xl mx-auto px-6 flex gap-1 overflow-x-auto">
-          <TabButton active={activeTab === 'generate'} onClick={() => setActiveTab('generate')}>✨ Generate</TabButton>
-          <TabButton active={activeTab === 'queue'} onClick={() => setActiveTab('queue')} count={pendingCount}>📋 Queue</TabButton>
-          <TabButton active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')}>📅 Calendar</TabButton>
-          <TabButton active={activeTab === 'graphics'} onClick={() => setActiveTab('graphics')}>🎨 Graphics</TabButton>
-          <TabButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')}>🧠 Insights</TabButton>
-          <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}>⚙️ Settings</TabButton>
+          <TabButton active={activeTab === 'generate'} onClick={() => setActiveTab('generate')}>Generate</TabButton>
+          <TabButton active={activeTab === 'queue'} onClick={() => setActiveTab('queue')} count={pendingCount}>Queue</TabButton>
+          <TabButton active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')}>Calendar</TabButton>
+          <TabButton active={activeTab === 'graphics'} onClick={() => setActiveTab('graphics')}>Graphics</TabButton>
+          <TabButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')}>Insights</TabButton>
+          <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}>Settings</TabButton>
         </div>
       </nav>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
-          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved', scheduledFor: '2025-01-15 09:00' } : p))} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} />}
+          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} />}
+          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved', scheduledFor: '2025-01-15 09:00' } : p))} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
-          {activeTab === 'settings' && <SettingsPanel />}
+          {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} />}
         </div>
       </main>
     </div>
