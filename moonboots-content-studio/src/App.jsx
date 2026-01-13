@@ -149,10 +149,9 @@ const topicSuggestions = {
   ],
 };
 
-// Content Generator with optimal timing - state lifted from parent
+// Content Generator - state lifted from parent
 const ContentGenerator = ({
   onGenerate,
-  insights,
   claudeApiKey,
   openaiApiKey,
   publerApiKey,
@@ -166,8 +165,6 @@ const ContentGenerator = ({
   setPlatforms,
   generatedContent,
   setGeneratedContent,
-  useOptimalTiming,
-  setUseOptimalTiming,
   instagramTemplate,
   setInstagramTemplate,
 }) => {
@@ -417,12 +414,10 @@ const ContentGenerator = ({
 
   const handleAddToQueue = (platform) => {
     if (generatedContent?.[platform]) {
-      const optimalSlot = useOptimalTiming && insights?.optimal?.[platform];
       onGenerate({
         content: generatedContent[platform],
         platform,
         pillar: pillars.find(p => p.id === selectedPillar)?.name,
-        suggestedTime: optimalSlot ? `${optimalSlot.day} ${optimalSlot.hour}:00` : null,
         imageTemplate: platform === 'instagram' ? instagramTemplate : null,
       });
       setGeneratedContent(prev => ({ ...prev, [platform]: null }));
@@ -431,30 +426,6 @@ const ContentGenerator = ({
 
   return (
     <div className="space-y-8">
-      {insights?.optimal && (
-        <div className="relative p-5 bg-gradient-to-br from-blue-950/50 to-slate-900/50 rounded-2xl border border-blue-500/20 backdrop-blur-sm overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl -mr-16 -mt-16" />
-          <div className="relative flex items-center justify-between mb-4">
-            <h4 className="text-sm font-semibold text-blue-300 flex items-center gap-2">
-              <span className="w-6 h-6 rounded-lg bg-blue-500/20 flex items-center justify-center text-xs">🎯</span>
-              Optimal Posting Windows
-            </h4>
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 focus:ring-offset-0" />
-              <span className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors">Auto-schedule</span>
-            </label>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            {Object.entries(insights.optimal).map(([platform, data]) => (
-              <div key={platform} className="flex items-center gap-3 p-3 bg-slate-900/50 rounded-xl border border-white/5">
-                <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
-                <span className="text-sm text-slate-200 font-medium">{data.day} {data.hour}:00</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div>
         <div className="flex items-center justify-between mb-3">
           <label className="text-sm font-medium text-slate-300">Topic or idea</label>
@@ -638,12 +609,7 @@ const ContentGenerator = ({
                   <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center">
                     <PlatformIcon platform={platform} className="w-4 h-4 text-slate-300" />
                   </div>
-                  <div>
-                    <span className="text-sm font-medium text-slate-200 capitalize">{platform === 'x' ? 'X' : platform}</span>
-                    {useOptimalTiming && insights?.optimal?.[platform] && (
-                      <span className="block text-xs text-blue-400">🎯 {insights.optimal[platform].day} {insights.optimal[platform].hour}:00</span>
-                    )}
-                  </div>
+                  <span className="text-sm font-medium text-slate-200 capitalize">{platform === 'x' ? 'X' : platform}</span>
                   {platform === 'instagram' && instagramTemplate && (
                     <span className="text-xs px-2 py-1 bg-pink-500/20 text-pink-400 rounded-lg">📸 {instagramTemplates.find(t => t.id === instagramTemplate)?.name}</span>
                   )}
@@ -1927,7 +1893,6 @@ export default function ContentStudio() {
   const [generatorPillar, setGeneratorPillar] = useState('ai');
   const [generatorPlatforms, setGeneratorPlatforms] = useState({ linkedin: true, x: true, instagram: false });
   const [generatedContent, setGeneratedContent] = useState(null);
-  const [useOptimalTiming, setUseOptimalTiming] = useState(true);
   const [instagramTemplate, setInstagramTemplate] = useState('quote');
 
   // Lifted state from GraphicsImageMaker - persists across tab switches
@@ -2031,18 +1996,6 @@ export default function ContentStudio() {
     setSaving(false);
   }, [backendAvailable]);
 
-  const insights = useMemo(() => {
-    const optimal = {};
-    ['linkedin', 'x', 'instagram'].forEach(platform => {
-      const platformPosts = performance.filter(p => p.platform === platform);
-      if (platformPosts.length > 0) {
-        const best = platformPosts.reduce((a, b) => (a.likes + a.comments * 2 + a.shares * 3) > (b.likes + b.comments * 2 + b.shares * 3) ? a : b);
-        optimal[platform] = { day: best.dayOfWeek, hour: best.hour };
-      }
-    });
-    return { optimal };
-  }, [performance]);
-
   const handleGenerate = useCallback(async (newPost) => {
     const post = {
       ...newPost,
@@ -2059,7 +2012,6 @@ export default function ContentStudio() {
         platform: post.platform,
         pillar: post.pillar,
         status: 'pending',
-        suggested_time: post.suggestedTime,
       });
       if (savedPost) {
         post.id = savedPost.id;
@@ -2194,7 +2146,6 @@ export default function ContentStudio() {
             {activeTab === 'generate' && (
               <ContentGenerator
                 onGenerate={handleGenerate}
-                insights={insights}
                 claudeApiKey={settings.claudeApiKey}
                 openaiApiKey={settings.openaiApiKey}
                 publerApiKey={settings.publerApiKey}
@@ -2207,8 +2158,6 @@ export default function ContentStudio() {
                 setPlatforms={setGeneratorPlatforms}
                 generatedContent={generatedContent}
                 setGeneratedContent={setGeneratedContent}
-                useOptimalTiming={useOptimalTiming}
-                setUseOptimalTiming={setUseOptimalTiming}
                 instagramTemplate={instagramTemplate}
                 setInstagramTemplate={setInstagramTemplate}
               />
