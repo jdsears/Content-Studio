@@ -64,7 +64,7 @@ const TabButton = ({ active, onClick, children, count }) => (
 );
 
 // Generate template-based image using canvas
-const generateTemplateImage = (content, template, platform, theme = 'midnight') => {
+const generateTemplateImage = async (content, template, platform, theme = 'midnight') => {
   const canvas = document.createElement('canvas');
   const size = platform === 'instagram' ? 1080 : 1200;
   const height = platform === 'x' ? 675 : size;
@@ -72,18 +72,10 @@ const generateTemplateImage = (content, template, platform, theme = 'midnight') 
   canvas.height = height;
   const ctx = canvas.getContext('2d');
 
-  // Extract headline and body from content
+  // Extract headline and body from content - remove character limit
   const lines = content.split('\n').filter(l => l.trim());
   const headline = lines[0] || '';
-  const body = lines.slice(1).join(' ').substring(0, 200);
-
-  // Template layout styles
-  const templateLayouts = {
-    quote: { showQuoteMark: true, centered: false },
-    stat: { showQuoteMark: false, centered: true },
-    question: { showQuoteMark: false, centered: false },
-    insight: { showQuoteMark: false, centered: false },
-  };
+  const body = lines.slice(1).join(' ');
 
   // Theme colors
   const themeColors = {
@@ -96,7 +88,6 @@ const generateTemplateImage = (content, template, platform, theme = 'midnight') 
   };
 
   const t = themeColors[theme] || themeColors.midnight;
-  const layout = templateLayouts[template] || templateLayouts.quote;
 
   // Draw gradient background
   const grd = ctx.createLinearGradient(0, 0, size, height);
@@ -120,39 +111,47 @@ const generateTemplateImage = (content, template, platform, theme = 'midnight') 
   ctx.fillStyle = t.accent;
   ctx.fillRect(60, 80, 6, 100);
 
-  // Draw logo
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(size - 100, 80, 20, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = t.gradient[0];
-  ctx.beginPath();
-  ctx.arc(size - 93, 80, 14, 0, Math.PI * 2);
-  ctx.fill();
+  // Load and draw actual logo
+  try {
+    const logo = new Image();
+    logo.crossOrigin = 'anonymous';
+    await new Promise((resolve, reject) => {
+      logo.onload = resolve;
+      logo.onerror = reject;
+      logo.src = '/moonboots-logo.png';
+    });
+    // Draw logo scaled to fit
+    const logoHeight = 40;
+    const logoWidth = (logo.width / logo.height) * logoHeight;
+    ctx.drawImage(logo, size - logoWidth - 60, 60, logoWidth, logoHeight);
+  } catch {
+    // Fallback to text if logo fails to load
+    ctx.font = 'bold 24px system-ui';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('moonboots', size - 180, 85);
+  }
 
-  ctx.font = 'bold 16px system-ui';
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillText('moonboots', size - 200, 86);
-
-  // Draw headline
-  ctx.font = `bold ${Math.round(size * 0.055)}px system-ui`;
+  // Draw headline - larger and bolder
+  ctx.font = `bold ${Math.round(size * 0.05)}px system-ui`;
   ctx.fillStyle = '#ffffff';
   const headlineLines = wrapText(ctx, headline, size - 160);
-  let y = 220;
-  headlineLines.slice(0, 3).forEach(line => {
+  let y = 200;
+  headlineLines.slice(0, 4).forEach(line => {
     ctx.fillText(line, 80, y);
-    y += size * 0.07;
+    y += size * 0.065;
   });
 
-  // Draw body text
+  // Draw body text - more lines allowed
   if (body) {
-    ctx.font = `${Math.round(size * 0.035)}px system-ui`;
+    ctx.font = `${Math.round(size * 0.028)}px system-ui`;
     ctx.fillStyle = '#94a3b8';
     const bodyLines = wrapText(ctx, body, size - 160);
-    y += 20;
-    bodyLines.slice(0, 6).forEach(line => {
+    y += 15;
+    // Calculate how many lines can fit
+    const maxBodyLines = Math.floor((height - y - 80) / (size * 0.038));
+    bodyLines.slice(0, Math.min(maxBodyLines, 10)).forEach(line => {
       ctx.fillText(line, 80, y);
-      y += size * 0.045;
+      y += size * 0.038;
     });
   }
 
@@ -336,17 +335,19 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
           } catch (error) {
             console.error(`AI image generation failed for ${platform}:`, error);
             // Fall back to template on error
-            const imageUrl = generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+            const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
             setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
           }
           setGeneratingImages(prev => ({ ...prev, [platform]: false }));
         } else {
           // Template-based image generation
-          setTimeout(() => {
-            const imageUrl = generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+          try {
+            const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
             setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-            setGeneratingImages(prev => ({ ...prev, [platform]: false }));
-          }, 500 + Math.random() * 1000);
+          } catch (error) {
+            console.error(`Template image generation failed for ${platform}:`, error);
+          }
+          setGeneratingImages(prev => ({ ...prev, [platform]: false }));
         }
       }
     });
@@ -365,17 +366,18 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       } catch (error) {
         console.error(`AI image regeneration failed for ${platform}:`, error);
         // Fall back to template on error
-        const imageUrl = generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
+        const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
         setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
       }
-      setGeneratingImages(prev => ({ ...prev, [platform]: false }));
     } else {
-      setTimeout(() => {
-        const imageUrl = generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
+      try {
+        const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
         setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-        setGeneratingImages(prev => ({ ...prev, [platform]: false }));
-      }, 800);
+      } catch (error) {
+        console.error(`Template image regeneration failed for ${platform}:`, error);
+      }
     }
+    setGeneratingImages(prev => ({ ...prev, [platform]: false }));
   };
 
   const updatePlatformImageSetting = (platform, key, value) => {
