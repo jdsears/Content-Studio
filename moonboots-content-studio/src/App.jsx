@@ -322,37 +322,42 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
     setGeneratedContent(content);
 
     // Auto-generate images for each platform based on per-platform settings
-    Object.keys(platforms).forEach(async (platform) => {
-      if (platforms[platform] && content[platform]) {
-        const imgSettings = platformImageSettings[platform];
-        if (!imgSettings.enabled) return; // Skip if images disabled for this platform
+    const enabledPlatforms = Object.keys(platforms).filter(p => platforms[p] && content[p] && platformImageSettings[p]?.enabled);
 
-        setGeneratingImages(prev => ({ ...prev, [platform]: true }));
+    // Set all as generating
+    enabledPlatforms.forEach(platform => {
+      setGeneratingImages(prev => ({ ...prev, [platform]: true }));
+    });
 
+    // Generate all images in parallel
+    await Promise.all(enabledPlatforms.map(async (platform) => {
+      const imgSettings = platformImageSettings[platform];
+
+      try {
+        let imageUrl;
         if (imgSettings.type === 'ai' && settings.openaiApiKey) {
           // AI image generation using OpenAI DALL-E
           try {
-            const imageUrl = await generateAIImage(content[platform], platform, settings.openaiApiKey);
-            setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+            imageUrl = await generateAIImage(content[platform], platform, settings.openaiApiKey);
           } catch (error) {
             console.error(`AI image generation failed for ${platform}:`, error);
             // Fall back to template on error
-            const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
-            setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+            imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
           }
-          setGeneratingImages(prev => ({ ...prev, [platform]: false }));
         } else {
           // Template-based image generation
-          try {
-            const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
-            setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-          } catch (error) {
-            console.error(`Template image generation failed for ${platform}:`, error);
-          }
-          setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+          imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
         }
+
+        if (imageUrl) {
+          setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+        }
+      } catch (error) {
+        console.error(`Image generation failed for ${platform}:`, error);
+      } finally {
+        setGeneratingImages(prev => ({ ...prev, [platform]: false }));
       }
-    });
+    }));
 
     setGenerating(false);
   };
