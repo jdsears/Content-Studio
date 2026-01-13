@@ -726,35 +726,22 @@ const QuoteCardMaker = () => {
   );
 };
 
-// Settings Panel with localStorage persistence
+// Settings Panel with localStorage persistence (auto-save)
 const SettingsPanel = ({ settings, onSettingsChange }) => {
-  const [localSettings, setLocalSettings] = useState(settings);
   const [saveStatus, setSaveStatus] = useState('');
 
   const handleChange = (key, value) => {
-    const newSettings = { ...localSettings, [key]: value };
-    setLocalSettings(newSettings);
-  };
-
-  const handleSave = () => {
-    onSettingsChange(localSettings);
+    const newSettings = { ...settings, [key]: value };
+    onSettingsChange(newSettings);
     setSaveStatus('saved');
-    setTimeout(() => setSaveStatus(''), 2000);
+    setTimeout(() => setSaveStatus(''), 1500);
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium text-white">Settings</h2>
-        <div className="flex items-center gap-3">
-          {saveStatus === 'saved' && <span className="text-sm text-green-400">Settings saved!</span>}
-          <button
-            onClick={handleSave}
-            className="px-4 py-2 text-sm bg-white text-slate-900 rounded-lg hover:bg-slate-100"
-          >
-            Save Settings
-          </button>
-        </div>
+        {saveStatus === 'saved' && <span className="text-sm text-green-400">Auto-saved</span>}
       </div>
 
       <div>
@@ -783,7 +770,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             <label className="text-xs text-slate-500 mb-1 block">Publer API Key</label>
             <input
               type="password"
-              value={localSettings.publerApiKey || ''}
+              value={settings.publerApiKey || ''}
               onChange={(e) => handleChange('publerApiKey', e.target.value)}
               placeholder="Enter your Publer API key"
               className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
@@ -794,7 +781,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             <label className="text-xs text-slate-500 mb-1 block">Workspace ID</label>
             <input
               type="text"
-              value={localSettings.publerWorkspaceId || ''}
+              value={settings.publerWorkspaceId || ''}
               onChange={(e) => handleChange('publerWorkspaceId', e.target.value)}
               placeholder="Enter your Publer workspace ID"
               className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
@@ -804,7 +791,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             <input
               type="checkbox"
               id="autoSchedule"
-              checked={localSettings.autoSchedule || false}
+              checked={settings.autoSchedule || false}
               onChange={(e) => handleChange('autoSchedule', e.target.checked)}
               className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0"
             />
@@ -816,7 +803,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             <input
               type="checkbox"
               id="includeImages"
-              checked={localSettings.includeImages !== false}
+              checked={settings.includeImages !== false}
               onChange={(e) => handleChange('includeImages', e.target.checked)}
               className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0"
             />
@@ -834,7 +821,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             <label className="text-xs text-slate-500 mb-1 block">OpenAI API Key (for AI images)</label>
             <input
               type="password"
-              value={localSettings.openaiApiKey || ''}
+              value={settings.openaiApiKey || ''}
               onChange={(e) => handleChange('openaiApiKey', e.target.value)}
               placeholder="sk-..."
               className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
@@ -844,7 +831,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             <label className="text-xs text-slate-500 mb-1 block">Claude API Key (for content generation)</label>
             <input
               type="password"
-              value={localSettings.claudeApiKey || ''}
+              value={settings.claudeApiKey || ''}
               onChange={(e) => handleChange('claudeApiKey', e.target.value)}
               placeholder="sk-ant-..."
               className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
@@ -859,7 +846,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
           <div>
             <label className="text-xs text-slate-500 mb-1 block">Default Image Template</label>
             <select
-              value={localSettings.defaultTemplate || 'quote'}
+              value={settings.defaultTemplate || 'quote'}
               onChange={(e) => handleChange('defaultTemplate', e.target.value)}
               className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
             >
@@ -872,7 +859,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
           <div>
             <label className="text-xs text-slate-500 mb-1 block">Default Content Pillar</label>
             <select
-              value={localSettings.defaultPillar || 'ai'}
+              value={settings.defaultPillar || 'ai'}
               onChange={(e) => handleChange('defaultPillar', e.target.value)}
               className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
             >
