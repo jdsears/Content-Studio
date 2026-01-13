@@ -185,6 +185,43 @@ const wrapText = (ctx, text, maxWidth) => {
   return lines;
 };
 
+// Generate next available time slots for a platform
+const getNextTimeSlots = (platform, count = 5) => {
+  const benchmark = industryBenchmarks[platform];
+  const slots = [];
+  const now = new Date();
+  let currentDay = now.getDay(); // 0 = Sunday
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  // Get next 14 days of slots
+  for (let d = 0; d < 14 && slots.length < count; d++) {
+    const checkDay = (currentDay + d) % 7;
+    const dayName = dayNames[checkDay];
+
+    if (benchmark.bestDays.includes(dayName)) {
+      benchmark.bestHours.forEach(hour => {
+        if (slots.length < count) {
+          const slotDate = new Date(now);
+          slotDate.setDate(slotDate.getDate() + d);
+          slotDate.setHours(hour, 0, 0, 0);
+
+          // Only include future times
+          if (slotDate > now) {
+            slots.push({
+              day: dayName,
+              hour,
+              date: slotDate,
+              label: d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : dayName,
+              full: `${d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : dayName} ${hour}:00`
+            });
+          }
+        }
+      });
+    }
+  }
+  return slots;
+};
+
 // Content Generator with optimal timing and images
 const ContentGenerator = ({ onGenerate, insights, settings }) => {
   const [topic, setTopic] = useState('');
@@ -196,6 +233,8 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
   const [generatingImages, setGeneratingImages] = useState({});
   const [useOptimalTiming, setUseOptimalTiming] = useState(true);
   const [imageTemplate, setImageTemplate] = useState('quote');
+  const [selectedSlots, setSelectedSlots] = useState({});
+  const [showScheduleOptions, setShowScheduleOptions] = useState(null);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -236,40 +275,75 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
 
   const handleAddToQueue = (platform) => {
     if (generatedContent?.[platform]) {
-      const optimalSlot = useOptimalTiming && insights?.optimal?.[platform];
+      // Use selected slot, or first available slot if auto-schedule is on
+      let scheduledTime = null;
+      if (useOptimalTiming) {
+        const slot = selectedSlots[platform] || getNextTimeSlots(platform, 1)[0];
+        scheduledTime = slot ? slot.full : null;
+      }
       onGenerate({
         content: generatedContent[platform],
         platform,
         pillar: pillars.find(p => p.id === selectedPillar)?.name,
-        suggestedTime: optimalSlot ? `${optimalSlot.day} ${optimalSlot.hour}:00` : null,
+        suggestedTime: scheduledTime,
         image: generatedImages[platform] || null,
       });
       setGeneratedContent(prev => ({ ...prev, [platform]: null }));
       setGeneratedImages(prev => ({ ...prev, [platform]: null }));
+      setSelectedSlots(prev => ({ ...prev, [platform]: null }));
     }
   };
 
   return (
     <div className="space-y-6">
-      {insights?.optimal && (
-        <div className="p-4 bg-blue-900/20 rounded-xl border border-blue-800/30">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium text-blue-300">Your Optimal Posting Windows</h4>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0" />
-              <span className="text-xs text-slate-400">Auto-schedule</span>
-            </label>
-          </div>
-          <div className="grid grid-cols-3 gap-3 text-xs">
-            {Object.entries(insights.optimal).map(([platform, data]) => (
-              <div key={platform} className="flex items-center gap-2">
-                <PlatformIcon platform={platform} className="w-3 h-3 text-slate-400" />
-                <span className="text-slate-300">{data.day} {data.hour}:00</span>
-              </div>
-            ))}
-          </div>
+      {/* Scheduling Panel */}
+      <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-sm font-medium text-white">Scheduling</h4>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0" />
+            <span className="text-xs text-slate-400">Auto-schedule to optimal times</span>
+          </label>
         </div>
-      )}
+
+        {useOptimalTiming && (
+          <div className="space-y-3">
+            {['linkedin', 'x', 'instagram'].filter(p => platforms[p]).map(platform => {
+              const slots = getNextTimeSlots(platform, 5);
+              const selected = selectedSlots[platform] || slots[0];
+              const benchmark = industryBenchmarks[platform];
+              return (
+                <div key={platform} className="p-3 bg-slate-900/50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
+                      <span className="text-sm text-white capitalize">{platform === 'x' ? 'X' : platform}</span>
+                      <span className="text-xs text-slate-500">({benchmark.frequency.min}-{benchmark.frequency.max}x/week)</span>
+                    </div>
+                    <span className="text-xs text-blue-400">{selected?.full || 'No slot'}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {slots.map((slot, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setSelectedSlots(prev => ({ ...prev, [platform]: slot }))}
+                        className={`px-2 py-1 text-xs rounded ${
+                          selected?.full === slot.full
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                      >
+                        {slot.label} {slot.hour}:00
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-2">Best days: {benchmark.bestDays.join(', ')}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div>
         <label className="block text-sm text-slate-400 mb-2">Topic or idea</label>
