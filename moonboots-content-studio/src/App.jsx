@@ -31,16 +31,9 @@ const industryBenchmarks = {
 };
 
 const Logo = () => (
-  <div className="flex flex-col">
-    <div className="flex items-center">
-      <span className="text-lg font-medium text-white tracking-tight">m</span>
-      <div className="w-4 h-4 relative mx-0.5">
-        <div className="absolute inset-0 rounded-full bg-white" />
-        <div className="absolute rounded-full bg-slate-900" style={{ width: '70%', height: '70%', top: '15%', left: '35%' }} />
-      </div>
-      <span className="text-lg font-medium text-white tracking-tight">nboots</span>
-    </div>
-    <span className="text-[10px] font-light text-slate-400 tracking-widest self-end -mt-1">content studio</span>
+  <div className="flex flex-col items-start">
+    <img src="/moonboots-logo.png" alt="moonboots" className="h-6" />
+    <span className="text-[10px] font-light text-slate-400 tracking-widest -mt-0.5">content studio</span>
   </div>
 );
 
