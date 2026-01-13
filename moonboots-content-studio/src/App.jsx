@@ -269,26 +269,43 @@ const templateThemes = {
 };
 
 // Content Generator with optimal timing and images
-const ContentGenerator = ({ onGenerate, insights, settings }) => {
-  const [topic, setTopic] = useState('');
-  const [selectedPillar, setSelectedPillar] = useState('ai');
-  const [platforms, setPlatforms] = useState({ linkedin: true, x: true, instagram: false });
+const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setGeneratorState }) => {
+  // Use lifted state from parent
+  const {
+    topic = '',
+    selectedPillar = 'ai',
+    platforms = { linkedin: true, x: true, instagram: false },
+    generatedContent = null,
+    generatedImages = {},
+    generatingImages = {},
+    useOptimalTiming = true,
+    selectedSlots = {},
+    platformImageSettings = {
+      linkedin: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+      x: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+      instagram: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+    },
+    expandedPlatformSettings = null,
+  } = generatorState;
+
   const [generating, setGenerating] = useState(false);
-  const [generatedContent, setGeneratedContent] = useState(null);
-  const [generatedImages, setGeneratedImages] = useState({});
-  const [generatingImages, setGeneratingImages] = useState({});
-  const [useOptimalTiming, setUseOptimalTiming] = useState(true);
-  const [selectedSlots, setSelectedSlots] = useState({});
   const [showScheduleOptions, setShowScheduleOptions] = useState(null);
 
-  // Per-platform image settings
-  const [platformImageSettings, setPlatformImageSettings] = useState({
-    linkedin: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
-    x: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
-    instagram: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
-  });
+  // Helper to update lifted state
+  const updateState = (updates) => {
+    setGeneratorState(prev => ({ ...prev, ...updates }));
+  };
 
-  const [expandedPlatformSettings, setExpandedPlatformSettings] = useState(null);
+  const setTopic = (value) => updateState({ topic: value });
+  const setSelectedPillar = (value) => updateState({ selectedPillar: value });
+  const setPlatforms = (value) => updateState({ platforms: typeof value === 'function' ? value(platforms) : value });
+  const setGeneratedContent = (value) => updateState({ generatedContent: typeof value === 'function' ? value(generatedContent) : value });
+  const setGeneratedImages = (value) => updateState({ generatedImages: typeof value === 'function' ? value(generatedImages) : value });
+  const setGeneratingImages = (value) => updateState({ generatingImages: typeof value === 'function' ? value(generatingImages) : value });
+  const setUseOptimalTiming = (value) => updateState({ useOptimalTiming: value });
+  const setSelectedSlots = (value) => updateState({ selectedSlots: typeof value === 'function' ? value(selectedSlots) : value });
+  const setPlatformImageSettings = (value) => updateState({ platformImageSettings: typeof value === 'function' ? value(platformImageSettings) : value });
+  const setExpandedPlatformSettings = (value) => updateState({ expandedPlatformSettings: value });
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -1177,6 +1194,24 @@ export default function ContentStudio() {
 
   const [performance] = useState(historicalPerformance);
 
+  // Generator state (lifted to persist across tab switches)
+  const [generatorState, setGeneratorState] = useState({
+    topic: '',
+    selectedPillar: 'ai',
+    platforms: { linkedin: true, x: true, instagram: false },
+    generatedContent: null,
+    generatedImages: {},
+    generatingImages: {},
+    useOptimalTiming: true,
+    selectedSlots: {},
+    platformImageSettings: {
+      linkedin: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+      x: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+      instagram: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+    },
+    expandedPlatformSettings: null,
+  });
+
   // Settings with localStorage persistence
   const [settings, setSettings] = useState(() => {
     try {
@@ -1269,7 +1304,7 @@ export default function ContentStudio() {
 
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
-          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} />}
+          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} />}
           {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'approved', scheduledFor: '2025-01-15 09:00' } : p))} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
