@@ -400,14 +400,21 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
 
       try {
         let imageUrl;
-        if (imgSettings.type === 'ai' && settings.openaiApiKey) {
-          // AI image generation using OpenAI DALL-E
-          try {
-            imageUrl = await generateAIImage(content[platform], platform, settings.openaiApiKey);
-          } catch (error) {
-            console.error(`AI image generation failed for ${platform}:`, error);
-            // Fall back to template on error
+        if (imgSettings.type === 'ai') {
+          if (!settings.openaiApiKey) {
+            console.warn(`No OpenAI API key configured, using template for ${platform}`);
+            alert(`OpenAI API key not configured. Using template for ${platform} image.`);
             imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+          } else {
+            // AI image generation using OpenAI DALL-E
+            try {
+              imageUrl = await generateAIImage(content[platform], platform, settings.openaiApiKey);
+            } catch (error) {
+              console.error(`AI image generation failed for ${platform}:`, error);
+              alert(`AI image generation failed for ${platform}: ${error.message}. Using template instead.`);
+              // Fall back to template on error
+              imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+            }
           }
         } else {
           // Template-based image generation
