@@ -132,34 +132,39 @@ const generateTemplateImage = async (content, template, platform, theme = 'midni
     ctx.fillText('moonboots', size - 180, 85);
   }
 
-  // Draw headline - larger and bolder
-  ctx.font = `bold ${Math.round(size * 0.05)}px system-ui`;
+  // Draw headline - sized to fit content
+  const headlineFontSize = Math.round(size * 0.04);
+  ctx.font = `bold ${headlineFontSize}px system-ui`;
   ctx.fillStyle = '#ffffff';
-  const headlineLines = wrapText(ctx, headline, size - 160);
-  let y = 200;
-  headlineLines.slice(0, 4).forEach(line => {
+  const headlineLines = wrapText(ctx, headline, size - 140);
+  let y = 180;
+  const headlineLineHeight = headlineFontSize * 1.3;
+  headlineLines.slice(0, 6).forEach(line => {
     ctx.fillText(line, 80, y);
-    y += size * 0.065;
+    y += headlineLineHeight;
   });
 
-  // Draw body text - more lines allowed
+  // Draw body text - use remaining space
   if (body) {
-    ctx.font = `${Math.round(size * 0.028)}px system-ui`;
+    const bodyFontSize = Math.round(size * 0.024);
+    ctx.font = `${bodyFontSize}px system-ui`;
     ctx.fillStyle = '#94a3b8';
-    const bodyLines = wrapText(ctx, body, size - 160);
-    y += 15;
-    // Calculate how many lines can fit
-    const maxBodyLines = Math.floor((height - y - 80) / (size * 0.038));
-    bodyLines.slice(0, Math.min(maxBodyLines, 10)).forEach(line => {
+    const bodyLines = wrapText(ctx, body, size - 140);
+    y += 20;
+    const bodyLineHeight = bodyFontSize * 1.5;
+    // Calculate how many lines can fit before footer
+    const availableHeight = height - y - 70;
+    const maxBodyLines = Math.floor(availableHeight / bodyLineHeight);
+    bodyLines.slice(0, Math.min(maxBodyLines, 15)).forEach(line => {
       ctx.fillText(line, 80, y);
-      y += size * 0.038;
+      y += bodyLineHeight;
     });
   }
 
   // Footer
   ctx.font = '14px system-ui';
   ctx.fillStyle = '#64748b';
-  ctx.fillText('moonbootsconsultancy.net', 80, height - 50);
+  ctx.fillText('moonbootslabs.com', 80, height - 50);
 
   return canvas.toDataURL('image/png');
 };
