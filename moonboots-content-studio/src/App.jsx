@@ -221,6 +221,43 @@ const getNextTimeSlots = (platform, count = 5) => {
   return slots;
 };
 
+// Generate AI image using OpenAI DALL-E
+const generateAIImage = async (content, platform, apiKey) => {
+  // Extract the main idea from the content for the prompt
+  const firstLine = content.split('\n')[0].trim();
+  const prompt = `Professional, modern social media graphic for ${platform}. Abstract, minimalist design representing the concept: "${firstLine}". Use subtle gradients, geometric shapes, and a sophisticated dark color palette. No text in the image. High quality, clean aesthetic suitable for business/professional audience.`;
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: prompt,
+        n: 1,
+        size: platform === 'instagram' ? '1024x1024' : '1792x1024',
+        quality: 'standard',
+        response_format: 'b64_json',
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error?.message || 'Failed to generate image');
+    }
+
+    const data = await response.json();
+    const base64Image = data.data[0].b64_json;
+    return `data:image/png;base64,${base64Image}`;
+  } catch (error) {
+    console.error('AI image generation failed:', error);
+    throw error;
+  }
+};
+
 // Template themes with colors
 const templateThemes = {
   midnight: { name: 'Midnight', gradient: ['#0f172a', '#1e3a5f'], accent: '#3b82f6' },
@@ -267,7 +304,7 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
     setGeneratedContent(content);
 
     // Auto-generate images for each platform based on per-platform settings
-    Object.keys(platforms).forEach(platform => {
+    Object.keys(platforms).forEach(async (platform) => {
       if (platforms[platform] && content[platform]) {
         const imgSettings = platformImageSettings[platform];
         if (!imgSettings.enabled) return; // Skip if images disabled for this platform
@@ -275,13 +312,17 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
         setGeneratingImages(prev => ({ ...prev, [platform]: true }));
 
         if (imgSettings.type === 'ai' && settings.openaiApiKey) {
-          // AI image generation (simulated for now - would call OpenAI API)
-          setTimeout(() => {
-            // For now, fall back to template with a note
+          // AI image generation using OpenAI DALL-E
+          try {
+            const imageUrl = await generateAIImage(content[platform], platform, settings.openaiApiKey);
+            setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+          } catch (error) {
+            console.error(`AI image generation failed for ${platform}:`, error);
+            // Fall back to template on error
             const imageUrl = generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
             setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-            setGeneratingImages(prev => ({ ...prev, [platform]: false }));
-          }, 1500 + Math.random() * 1000);
+          }
+          setGeneratingImages(prev => ({ ...prev, [platform]: false }));
         } else {
           // Template-based image generation
           setTimeout(() => {
@@ -296,14 +337,28 @@ const ContentGenerator = ({ onGenerate, insights, settings }) => {
     setGenerating(false);
   };
 
-  const handleRegenerateImage = (platform, content) => {
+  const handleRegenerateImage = async (platform, content) => {
     const imgSettings = platformImageSettings[platform];
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
-    setTimeout(() => {
-      const imageUrl = generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
-      setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+
+    if (imgSettings.type === 'ai' && settings.openaiApiKey) {
+      try {
+        const imageUrl = await generateAIImage(content, platform, settings.openaiApiKey);
+        setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+      } catch (error) {
+        console.error(`AI image regeneration failed for ${platform}:`, error);
+        // Fall back to template on error
+        const imageUrl = generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
+        setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+      }
       setGeneratingImages(prev => ({ ...prev, [platform]: false }));
-    }, 800);
+    } else {
+      setTimeout(() => {
+        const imageUrl = generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
+        setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+        setGeneratingImages(prev => ({ ...prev, [platform]: false }));
+      }, 800);
+    }
   };
 
   const updatePlatformImageSetting = (platform, key, value) => {
