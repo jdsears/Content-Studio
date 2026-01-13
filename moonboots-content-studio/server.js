@@ -14,9 +14,49 @@ app.use(express.json({ limit: '50mb' }));
 // Serve static files from dist
 app.use(express.static(join(__dirname, 'dist')));
 
+// Publer - Get connected social accounts
+app.post('/api/publer/accounts', async (req, res) => {
+  const { apiKey } = req.body;
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'API key is required' });
+  }
+
+  try {
+    const response = await fetch('https://publer.io/api/v1/social_accounts', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('Publer accounts error:', data);
+      return res.status(response.status).json({
+        error: data.message || data.error || 'Failed to fetch Publer accounts',
+        details: data
+      });
+    }
+
+    // Return accounts with platform info
+    const accounts = (data || []).map(acc => ({
+      id: acc.id,
+      platform: acc.platform,
+      name: acc.name || acc.username || acc.platform,
+    }));
+
+    res.json({ success: true, accounts });
+  } catch (error) {
+    console.error('Publer accounts failed:', error);
+    res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
+  }
+});
+
 // Publer API proxy endpoint
 app.post('/api/publish', async (req, res) => {
-  const { apiKey, post } = req.body;
+  const { apiKey, post, socialAccountId } = req.body;
 
   if (!apiKey) {
     return res.status(400).json({ error: 'API key is required' });
@@ -26,7 +66,7 @@ app.post('/api/publish', async (req, res) => {
     return res.status(400).json({ error: 'Post data is required' });
   }
 
-  // Map platform names to Publer
+  // Platform mapping for fetching accounts
   const platformMap = {
     linkedin: 'linkedin',
     instagram: 'instagram',
@@ -34,27 +74,71 @@ app.post('/api/publish', async (req, res) => {
   };
 
   const publerPlatform = platformMap[post.platform];
-  if (!publerPlatform) {
-    return res.status(400).json({ error: `Unsupported platform: ${post.platform}` });
-  }
-
-  // Build Publer payload
-  const payload = {
-    text: post.content,
-    platforms: [publerPlatform],
-  };
-
-  // Add image if present
-  if (post.image) {
-    payload.media = [{ url: post.image }];
-  }
-
-  // Add scheduling if specified
-  if (post.scheduledFor) {
-    payload.scheduled_at = new Date(post.scheduledFor).toISOString();
-  }
 
   try {
+    // If no socialAccountId provided, try to find one
+    let accountId = socialAccountId;
+
+    if (!accountId) {
+      // Fetch accounts to find matching platform
+      const accountsResponse = await fetch('https://publer.io/api/v1/social_accounts', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      });
+
+      const accounts = await accountsResponse.json();
+
+      if (!accountsResponse.ok) {
+        return res.status(accountsResponse.status).json({
+          error: 'Failed to fetch social accounts',
+          details: accounts
+        });
+      }
+
+      // Find account matching platform
+      const matchingAccount = accounts.find(acc =>
+        acc.platform === publerPlatform ||
+        acc.platform === post.platform
+      );
+
+      if (!matchingAccount) {
+        return res.status(400).json({
+          error: `No ${post.platform} account connected in Publer. Please connect your ${post.platform} account in Publer first.`,
+          availableAccounts: accounts.map(a => ({ id: a.id, platform: a.platform, name: a.name }))
+        });
+      }
+
+      accountId = matchingAccount.id;
+    }
+
+    // Build Publer payload with social_account_ids
+    const payload = {
+      text: post.content,
+      social_account_ids: [accountId],
+    };
+
+    // Add image if present (base64 needs special handling)
+    if (post.image) {
+      if (post.image.startsWith('data:')) {
+        // For base64 images, use the media upload approach
+        payload.media = [{
+          type: 'image',
+          data: post.image.split(',')[1], // Remove data:image/png;base64, prefix
+        }];
+      } else {
+        payload.media = [{ url: post.image }];
+      }
+    }
+
+    // Add scheduling if specified
+    if (post.scheduledFor) {
+      payload.scheduled_at = new Date(post.scheduledFor).toISOString();
+    }
+
+    console.log('Publer payload:', { ...payload, media: payload.media ? '[media]' : undefined });
+
     const response = await fetch('https://publer.io/api/v1/posts', {
       method: 'POST',
       headers: {
@@ -69,7 +153,7 @@ app.post('/api/publish', async (req, res) => {
     if (!response.ok) {
       console.error('Publer API error:', data);
       return res.status(response.status).json({
-        error: data.message || data.error || 'Failed to publish to Publer',
+        error: data.message || data.error || JSON.stringify(data) || 'Failed to publish to Publer',
         details: data
       });
     }
