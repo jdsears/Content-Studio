@@ -70,7 +70,7 @@ const generateTemplateImage = async (content, template, platform, theme = 'midni
 
   // Platform-optimized sizes
   const sizes = {
-    instagram: { width: 1080, height: 1080 },  // Square for feed
+    instagram: { width: 1080, height: 1350 },  // 4:5 portrait for feed
     linkedin: { width: 1200, height: 1200 },   // Square performs well
     x: { width: 1200, height: 675 },           // 16:9 for timeline
   };
@@ -261,7 +261,7 @@ const generateAIImage = async (content, platform, apiKey) => {
         model: 'dall-e-3',
         prompt: prompt,
         n: 1,
-        size: platform === 'instagram' ? '1024x1024' : '1792x1024',
+        size: platform === 'instagram' ? '1024x1792' : '1792x1024',  // Portrait for IG, landscape for others
         quality: 'standard',
         response_format: 'b64_json',
       }),
