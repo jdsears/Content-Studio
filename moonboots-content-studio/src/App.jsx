@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { api, checkBackendAvailable } from './lib/api';
 import { generateContent as claudeGenerateContent } from './lib/claude';
+import { createPost as publerCreatePost, getAccounts as publerGetAccounts } from './lib/publer';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -151,6 +152,8 @@ const ContentGenerator = ({
   onGenerate,
   insights,
   claudeApiKey,
+  publerApiKey,
+  publerWorkspaceId,
   // Lifted state props
   topic,
   setTopic,
@@ -168,6 +171,72 @@ const ContentGenerator = ({
   const [generating, setGenerating] = useState(false);
   const [generatingTopic, setGeneratingTopic] = useState(false);
   const [error, setError] = useState(null);
+  const [sendingToPubler, setSendingToPubler] = useState({});
+  const [publerAccounts, setPublerAccounts] = useState(null);
+  const [publerError, setPublerError] = useState(null);
+
+  // Fetch Publer accounts when credentials are available
+  useEffect(() => {
+    const fetchPublerAccounts = async () => {
+      if (publerApiKey && publerWorkspaceId) {
+        try {
+          const accounts = await publerGetAccounts({ apiKey: publerApiKey, workspaceId: publerWorkspaceId });
+          setPublerAccounts(accounts);
+          setPublerError(null);
+        } catch (err) {
+          console.error('Failed to fetch Publer accounts:', err);
+          setPublerError(err.message);
+          setPublerAccounts(null);
+        }
+      }
+    };
+    fetchPublerAccounts();
+  }, [publerApiKey, publerWorkspaceId]);
+
+  // Map platform to Publer account
+  const getPublerAccountId = (platform) => {
+    if (!publerAccounts) return null;
+    const platformMap = { linkedin: 'linkedin', x: 'twitter', instagram: 'instagram' };
+    const publerType = platformMap[platform];
+    const account = publerAccounts.find(a => a.type === publerType || a.platform === publerType);
+    return account?.id || account?._id;
+  };
+
+  const handleSendToPubler = async (platform) => {
+    if (!publerApiKey || !publerWorkspaceId) {
+      setPublerError('Publer API credentials not configured. Go to Settings.');
+      return;
+    }
+
+    const accountId = getPublerAccountId(platform);
+    if (!accountId) {
+      setPublerError(`No ${platform} account found in Publer. Connect it in Publer first.`);
+      return;
+    }
+
+    setSendingToPubler(prev => ({ ...prev, [platform]: true }));
+    setPublerError(null);
+
+    try {
+      await publerCreatePost({
+        apiKey: publerApiKey,
+        workspaceId: publerWorkspaceId,
+        accountIds: [accountId],
+        content: generatedContent[platform],
+        status: 'draft', // Send as draft so user can review in Publer
+      });
+
+      // Clear the content after successful send
+      setGeneratedContent(prev => ({ ...prev, [platform]: null }));
+    } catch (err) {
+      console.error('Failed to send to Publer:', err);
+      setPublerError(err.message);
+    } finally {
+      setSendingToPubler(prev => ({ ...prev, [platform]: false }));
+    }
+  };
+
+  const publerConfigured = publerApiKey && publerWorkspaceId;
 
   const handleGenerateTopic = async () => {
     setGeneratingTopic(true);
@@ -423,10 +492,25 @@ const ContentGenerator = ({
 
       {generatedContent && (
         <div className="space-y-4 pt-6">
-          <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Generated Content
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              Generated Content
+            </h3>
+            {publerConfigured && publerAccounts && (
+              <span className="text-xs text-violet-400 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+                Publer connected
+              </span>
+            )}
+          </div>
+
+          {publerError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
+              {publerError}
+            </div>
+          )}
+
           {Object.entries(generatedContent).map(([platform, content]) => content && platforms[platform] && (
             <div key={platform} className="p-5 bg-slate-900/50 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
               <div className="flex items-center justify-between mb-4">
@@ -435,7 +519,7 @@ const ContentGenerator = ({
                     <PlatformIcon platform={platform} className="w-4 h-4 text-slate-300" />
                   </div>
                   <div>
-                    <span className="text-sm font-medium text-slate-200 capitalize">{platform === 'x' ? 'X (Manual)' : platform}</span>
+                    <span className="text-sm font-medium text-slate-200 capitalize">{platform === 'x' ? 'X' : platform}</span>
                     {useOptimalTiming && insights?.optimal?.[platform] && (
                       <span className="block text-xs text-blue-400">🎯 {insights.optimal[platform].day} {insights.optimal[platform].hour}:00</span>
                     )}
@@ -444,12 +528,30 @@ const ContentGenerator = ({
                     <span className="text-xs px-2 py-1 bg-pink-500/20 text-pink-400 rounded-lg">📸 {instagramTemplates.find(t => t.id === instagramTemplate)?.name}</span>
                   )}
                 </div>
-                <button
-                  onClick={() => handleAddToQueue(platform)}
-                  className="px-4 py-2 text-sm bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 transition-colors shadow-sm"
-                >
-                  Add to Queue →
-                </button>
+                <div className="flex items-center gap-2">
+                  {publerConfigured && (
+                    <button
+                      onClick={() => handleSendToPubler(platform)}
+                      disabled={sendingToPubler[platform]}
+                      className="px-4 py-2 text-sm bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white font-medium rounded-lg hover:from-violet-600 hover:to-fuchsia-600 transition-all disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {sendingToPubler[platform] ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        'Send to Publer'
+                      )}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleAddToQueue(platform)}
+                    className="px-4 py-2 text-sm bg-white text-slate-900 font-medium rounded-lg hover:bg-slate-100 transition-colors shadow-sm"
+                  >
+                    Add to Queue →
+                  </button>
+                </div>
               </div>
               <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
             </div>
@@ -1382,7 +1484,7 @@ const GraphicsImageMaker = ({
 const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
   const [localSettings, setLocalSettings] = useState(settings);
   const [showClaudeKey, setShowClaudeKey] = useState(false);
-  const [showBufferKey, setShowBufferKey] = useState(false);
+  const [showPublerKey, setShowPublerKey] = useState(false);
 
   useEffect(() => {
     setLocalSettings(settings);
@@ -1399,20 +1501,21 @@ const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
       <div>
         <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
         <div className="space-y-3">
-          {[{ p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Buffer' }, { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Buffer' }, { p: 'x', label: 'X (Twitter)', sub: 'Manual posting only', manual: true }].map(({ p, label, sub, manual }) => (
+          {[{ p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Publer' }, { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Publer' }, { p: 'x', label: 'X (Twitter)', sub: 'Auto-post via Publer' }].map(({ p, label, sub }) => (
             <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
               <div className="flex items-center gap-3">
                 <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
-                <div><p className="text-sm text-white">{label}</p><p className={`text-xs ${manual ? 'text-yellow-500' : 'text-slate-500'}`}>{sub}</p></div>
+                <div><p className="text-sm text-white">{label}</p><p className="text-xs text-slate-500">{sub}</p></div>
               </div>
-              {manual ? <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span> : <button className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Connect</button>}
+              <span className="px-3 py-1.5 text-xs bg-violet-500/20 text-violet-300 rounded-lg">Via Publer</span>
             </div>
           ))}
         </div>
+        <p className="text-xs text-slate-500 mt-3">Connect your social accounts in Publer, then add your API credentials below.</p>
       </div>
       <div>
         <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div>
             <label className="text-xs text-slate-500 mb-1 block">Claude API Key</label>
             <div className="relative">
@@ -1433,25 +1536,43 @@ const SettingsPanel = ({ settings, onSettingsChange, saving }) => {
             </div>
             <p className="text-xs text-slate-600 mt-1">Get your key at console.anthropic.com</p>
           </div>
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Buffer Access Token</label>
-            <div className="relative">
-              <input
-                type={showBufferKey ? 'text' : 'password'}
-                value={localSettings.bufferAccessToken || ''}
-                onChange={(e) => setLocalSettings(prev => ({ ...prev, bufferAccessToken: e.target.value }))}
-                placeholder="Enter your Buffer access token"
-                className="w-full px-3 py-2 pr-16 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
-              />
-              <button
-                type="button"
-                onClick={() => setShowBufferKey(!showBufferKey)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
-              >
-                {showBufferKey ? 'Hide' : 'Show'}
-              </button>
+          <div className="pt-2 border-t border-slate-800">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm font-medium text-slate-300">Publer Integration</span>
+              <span className="text-[10px] px-2 py-0.5 bg-violet-500/20 text-violet-300 rounded">Business Plan Required</span>
             </div>
-            <p className="text-xs text-slate-600 mt-1">Get your token at buffer.com/developers</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Publer API Key</label>
+                <div className="relative">
+                  <input
+                    type={showPublerKey ? 'text' : 'password'}
+                    value={localSettings.publerApiKey || ''}
+                    onChange={(e) => setLocalSettings(prev => ({ ...prev, publerApiKey: e.target.value }))}
+                    placeholder="Enter your Publer API key"
+                    className="w-full px-3 py-2 pr-16 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPublerKey(!showPublerKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-300"
+                  >
+                    {showPublerKey ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Publer Workspace ID</label>
+                <input
+                  type="text"
+                  value={localSettings.publerWorkspaceId || ''}
+                  onChange={(e) => setLocalSettings(prev => ({ ...prev, publerWorkspaceId: e.target.value }))}
+                  placeholder="Enter your Workspace ID"
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 mt-2">Get credentials at Settings → Access & Login → API Keys in Publer</p>
           </div>
         </div>
       </div>
@@ -1846,6 +1967,8 @@ export default function ContentStudio() {
                 onGenerate={handleGenerate}
                 insights={insights}
                 claudeApiKey={settings.claudeApiKey}
+                publerApiKey={settings.publerApiKey}
+                publerWorkspaceId={settings.publerWorkspaceId}
                 topic={generatorTopic}
                 setTopic={setGeneratorTopic}
                 selectedPillar={generatorPillar}
