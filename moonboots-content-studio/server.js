@@ -161,10 +161,25 @@ app.post('/api/publer/test', async (req, res) => {
       });
     }
 
+    // Log account structure for debugging
+    if (accounts.length > 0) {
+      console.log('Publer account structure:', JSON.stringify(accounts[0], null, 2));
+    }
+
+    // Publer may use different field names: social_network, type, network, platform
+    const getAccountPlatform = (acc) => acc.social_network || acc.type || acc.network || acc.platform || 'unknown';
+    const getAccountName = (acc) => acc.name || acc.username || acc.display_name || getAccountPlatform(acc);
+
     res.json({
       success: true,
       accountCount: accounts.length,
-      accounts: accounts.map(a => `${a.name || a.platform} (${a.platform})`).join(', ') || 'None'
+      accounts: accounts.map(a => `${getAccountName(a)} (${getAccountPlatform(a)})`).join(', ') || 'None',
+      // Include full account data for the frontend
+      accountsList: accounts.map(a => ({
+        id: a.id,
+        platform: getAccountPlatform(a),
+        name: getAccountName(a),
+      }))
     });
   } catch (error) {
     console.error('Publer test failed:', error);

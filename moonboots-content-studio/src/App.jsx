@@ -1256,7 +1256,11 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
       });
       const data = await response.json();
       if (response.ok && data.success) {
-        setPublerStatus({ success: true, message: `Connected! Found ${data.accountCount} account(s): ${data.accounts}` });
+        setPublerStatus({
+          success: true,
+          message: `Connected! Found ${data.accountCount} account(s): ${data.accounts}`,
+          accountsList: data.accountsList || []
+        });
       } else {
         setPublerStatus({ success: false, message: data.error || 'Connection failed' });
       }
@@ -1288,18 +1292,35 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
         <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
         <div className="space-y-3">
           {[
-            { p: 'linkedin', label: 'LinkedIn', sub: 'Auto-post via Publer' },
-            { p: 'instagram', label: 'Instagram', sub: 'Auto-post via Publer' },
-            { p: 'x', label: 'X (Twitter)', sub: 'Manual posting only', manual: true }
-          ].map(({ p, label, sub, manual }) => (
-            <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-              <div className="flex items-center gap-3">
-                <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
-                <div><p className="text-sm text-white">{label}</p><p className={`text-xs ${manual ? 'text-yellow-500' : 'text-slate-500'}`}>{sub}</p></div>
+            { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin'] },
+            { p: 'instagram', label: 'Instagram', publerPlatforms: ['instagram'] },
+            { p: 'x', label: 'X (Twitter)', publerPlatforms: ['twitter', 'x'], manual: true }
+          ].map(({ p, label, publerPlatforms, manual }) => {
+            const connectedAccount = publerStatus?.accountsList?.find(
+              acc => publerPlatforms.some(pp => acc.platform?.toLowerCase()?.includes(pp))
+            );
+            const isConnected = !!connectedAccount;
+            return (
+              <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <div className="flex items-center gap-3">
+                  <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
+                  <div>
+                    <p className="text-sm text-white">{label}</p>
+                    <p className={`text-xs ${isConnected ? 'text-green-500' : manual ? 'text-yellow-500' : 'text-slate-500'}`}>
+                      {isConnected ? `Connected: ${connectedAccount?.name}` : manual ? 'Manual posting only' : 'Click Test Connection below'}
+                    </p>
+                  </div>
+                </div>
+                {manual && !isConnected ? (
+                  <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span>
+                ) : isConnected ? (
+                  <span className="px-3 py-1.5 text-xs bg-green-900/50 text-green-400 rounded-lg border border-green-700/50">Connected</span>
+                ) : (
+                  <a href="https://app.publer.com" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Add in Publer</a>
+                )}
               </div>
-              {manual ? <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span> : <button className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Connect</button>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
