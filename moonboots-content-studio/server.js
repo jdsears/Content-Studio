@@ -491,8 +491,84 @@ app.post('/api/publish', async (req, res) => {
       });
     }
 
-    // Publer returns a job_id for async operations
-    res.json({ success: true, data, jobId: data.job_id });
+    // Publer returns a job_id for async operations - poll for completion
+    const jobId = data.job_id;
+    if (!jobId) {
+      console.log('No job_id returned, assuming immediate success:', data);
+      return res.json({ success: true, data, status: 'completed' });
+    }
+
+    console.log('Got job_id:', jobId, '- polling for completion...');
+
+    // Poll job status (max 30 seconds, check every 2 seconds)
+    let jobComplete = false;
+    let jobResult = null;
+    let attempts = 0;
+    const maxAttempts = 15;
+
+    while (!jobComplete && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+      attempts++;
+
+      try {
+        const statusResponse = await fetch(`https://app.publer.com/api/v1/job_status/${jobId}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer-API ${apiKey}`,
+            'Publer-Workspace-Id': workspaceId,
+          },
+        });
+
+        const statusText = await statusResponse.text();
+        console.log(`Job status attempt ${attempts}:`, statusText.substring(0, 300));
+
+        if (!statusText.trim().startsWith('<')) {
+          jobResult = JSON.parse(statusText);
+
+          // Check if job is complete (status might be 'complete', 'done', 'failed', etc.)
+          if (jobResult.status === 'complete' || jobResult.status === 'done' ||
+              jobResult.status === 'failed' || jobResult.status === 'error' ||
+              jobResult.done === true || jobResult.complete === true) {
+            jobComplete = true;
+          }
+
+          // Also check for payload with results
+          if (jobResult.payload && (jobResult.payload.posts || jobResult.payload.errors)) {
+            jobComplete = true;
+          }
+        }
+      } catch (pollError) {
+        console.error('Job polling error:', pollError);
+      }
+    }
+
+    if (!jobComplete) {
+      console.log('Job polling timed out, returning pending status');
+      return res.json({
+        success: true,
+        data,
+        jobId,
+        status: 'pending',
+        message: 'Post scheduled - check Publer for status'
+      });
+    }
+
+    // Check if job failed
+    if (jobResult?.status === 'failed' || jobResult?.status === 'error' ||
+        jobResult?.payload?.errors?.length > 0) {
+      const errorMsg = jobResult?.payload?.errors?.[0]?.message ||
+                       jobResult?.error ||
+                       jobResult?.message ||
+                       'Post failed in Publer';
+      console.error('Publer job failed:', jobResult);
+      return res.status(400).json({
+        error: errorMsg,
+        details: jobResult
+      });
+    }
+
+    console.log('Job completed successfully:', jobResult);
+    res.json({ success: true, data: jobResult, jobId, status: 'completed' });
   } catch (error) {
     console.error('Publer publish failed:', error);
     res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
