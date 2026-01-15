@@ -1231,12 +1231,39 @@ const QuoteCardMaker = () => {
 // Settings Panel with localStorage persistence (auto-save)
 const SettingsPanel = ({ settings, onSettingsChange }) => {
   const [saveStatus, setSaveStatus] = useState('');
+  const [testingPubler, setTestingPubler] = useState(false);
+  const [publerStatus, setPublerStatus] = useState(null);
 
   const handleChange = (key, value) => {
     const newSettings = { ...settings, [key]: value };
     onSettingsChange(newSettings);
     setSaveStatus('saved');
     setTimeout(() => setSaveStatus(''), 2000);
+  };
+
+  const testPublerConnection = async () => {
+    if (!settings.publerApiKey) {
+      setPublerStatus({ success: false, message: 'Please enter a Publer API key first' });
+      return;
+    }
+    setTestingPubler(true);
+    setPublerStatus(null);
+    try {
+      const response = await fetch('/api/publer/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: settings.publerApiKey }),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setPublerStatus({ success: true, message: `Connected! Found ${data.accountCount} account(s): ${data.accounts}` });
+      } else {
+        setPublerStatus({ success: false, message: data.error || 'Connection failed' });
+      }
+    } catch (error) {
+      setPublerStatus({ success: false, message: error.message });
+    }
+    setTestingPubler(false);
   };
 
   return (
@@ -1290,8 +1317,20 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
             />
             <p className="text-xs text-slate-500 mt-1">Get your API key from publer.io/settings/api</p>
           </div>
+          <button
+            onClick={testPublerConnection}
+            disabled={testingPubler}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            {testingPubler ? 'Testing...' : 'Test Connection'}
+          </button>
+          {publerStatus && (
+            <div className={`p-3 rounded-lg text-sm ${publerStatus.success ? 'bg-green-900/50 text-green-300 border border-green-700/50' : 'bg-red-900/50 text-red-300 border border-red-700/50'}`}>
+              {publerStatus.message}
+            </div>
+          )}
           <div>
-            <label className="text-xs text-slate-500 mb-1 block">Workspace ID</label>
+            <label className="text-xs text-slate-500 mb-1 block">Workspace ID (optional)</label>
             <input
               type="text"
               value={settings.publerWorkspaceId || ''}

@@ -54,6 +54,57 @@ app.post('/api/publer/accounts', async (req, res) => {
   }
 });
 
+// Publer connection test endpoint
+app.post('/api/publer/test', async (req, res) => {
+  const { apiKey } = req.body;
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'API key is required' });
+  }
+
+  try {
+    const response = await fetch('https://publer.io/api/v1/social_accounts', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    });
+
+    const responseText = await response.text();
+
+    // Check for HTML error page
+    if (responseText.trim().startsWith('<')) {
+      console.error('Publer test returned HTML:', responseText.substring(0, 200));
+      return res.status(401).json({
+        error: 'Invalid API key. Publer returned an error page.',
+        hint: 'Please verify your API key at publer.io/settings/api'
+      });
+    }
+
+    let accounts;
+    try {
+      accounts = JSON.parse(responseText);
+    } catch (parseErr) {
+      return res.status(500).json({ error: 'Invalid response from Publer' });
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: accounts.message || accounts.error || 'Failed to connect to Publer'
+      });
+    }
+
+    res.json({
+      success: true,
+      accountCount: accounts.length,
+      accounts: accounts.map(a => `${a.name || a.platform} (${a.platform})`).join(', ') || 'None'
+    });
+  } catch (error) {
+    console.error('Publer test failed:', error);
+    res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
+  }
+});
+
 // Publer API proxy endpoint
 app.post('/api/publish', async (req, res) => {
   const { apiKey, post, socialAccountId } = req.body;
