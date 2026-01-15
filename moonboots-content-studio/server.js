@@ -250,6 +250,7 @@ app.post('/api/generate', async (req, res) => {
 THE MOONBOOTS LABS ECOSYSTEM:
 
 1. MOONBOOTS CONSULTANCY (Moonboots Consultancy UK Ltd)
+   Website: moonbootsconsultancy.net
    The professional services and advisory arm delivering:
    - AI Strategy & Integration Services (helping organisations apply AI meaningfully)
    - Website & Agentic AI Development (building functional AI applications for client needs)
@@ -372,6 +373,7 @@ app.post('/api/suggest-topic', async (req, res) => {
 THE MOONBOOTS LABS ECOSYSTEM:
 
 1. MOONBOOTS CONSULTANCY (Moonboots Consultancy UK Ltd)
+   Website: moonbootsconsultancy.net
    The professional services and advisory arm - the "business enablement bridge" delivering:
 
    Core Services:
