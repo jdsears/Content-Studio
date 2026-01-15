@@ -1280,6 +1280,32 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
   const [testingPubler, setTestingPubler] = useState(false);
   const [publerStatus, setPublerStatus] = useState(null);
 
+  // Load cached Publer status from localStorage on mount
+  useEffect(() => {
+    const cached = localStorage.getItem('publerConnectionStatus');
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        // Only use cached status if API key matches
+        if (parsed.apiKeyHash === settings.publerApiKey?.slice(-8)) {
+          setPublerStatus(parsed.status);
+        }
+      } catch (e) {
+        console.error('Failed to parse cached Publer status:', e);
+      }
+    }
+  }, [settings.publerApiKey]);
+
+  // Auto-test connection on mount if API key exists but no cached status
+  useEffect(() => {
+    if (settings.publerApiKey && !publerStatus && !testingPubler) {
+      const cached = localStorage.getItem('publerConnectionStatus');
+      if (!cached) {
+        testPublerConnection();
+      }
+    }
+  }, [settings.publerApiKey]);
+
   const handleChange = (key, value) => {
     const newSettings = { ...settings, [key]: value };
     onSettingsChange(newSettings);
@@ -1302,16 +1328,26 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
       });
       const data = await response.json();
       if (response.ok && data.success) {
-        setPublerStatus({
+        const newStatus = {
           success: true,
           message: `Connected! Found ${data.accountCount} account(s): ${data.accounts}`,
           accountsList: data.accountsList || []
-        });
+        };
+        setPublerStatus(newStatus);
+        // Cache the status to localStorage with last 8 chars of API key as hash
+        localStorage.setItem('publerConnectionStatus', JSON.stringify({
+          apiKeyHash: settings.publerApiKey.slice(-8),
+          status: newStatus,
+          timestamp: Date.now()
+        }));
       } else {
         setPublerStatus({ success: false, message: data.error || 'Connection failed' });
+        // Clear cached status on failure
+        localStorage.removeItem('publerConnectionStatus');
       }
     } catch (error) {
       setPublerStatus({ success: false, message: error.message });
+      localStorage.removeItem('publerConnectionStatus');
     }
     setTestingPubler(false);
   };
