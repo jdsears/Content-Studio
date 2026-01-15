@@ -560,11 +560,10 @@ app.post('/api/generate-image', async (req, res) => {
   // Supported sizes: 1024x1024, 1536x1024 (landscape), 1024x1536 (portrait)
   let size;
   if (platform === 'instagram') {
-    size = '1024x1536'; // Portrait for Instagram
-  } else if (platform === 'x') {
-    size = '1536x1024'; // Landscape for X/Twitter
+    size = '1024x1536'; // Portrait for Instagram (4:5 ratio)
   } else {
-    size = '1024x1024'; // Square for LinkedIn and others
+    // Landscape for LinkedIn and X/Twitter
+    size = '1536x1024';
   }
   console.log('Using gpt-image-1 with size:', size, 'for platform:', platform);
 
