@@ -23,10 +23,34 @@ app.post('/api/publer/accounts', async (req, res) => {
   }
 
   try {
-    const response = await fetch('https://publer.io/api/v1/social_accounts', {
+    // First get workspace ID
+    const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer-API ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const wsText = await wsResponse.text();
+    if (wsText.trim().startsWith('<') || !wsResponse.ok) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+
+    const workspaces = JSON.parse(wsText);
+    if (!workspaces || workspaces.length === 0) {
+      return res.status(400).json({ error: 'No workspaces found' });
+    }
+
+    const workspaceId = workspaces[0].id;
+
+    // Get social accounts
+    const response = await fetch('https://app.publer.com/api/v1/social_accounts', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer-API ${apiKey}`,
+        'Publer-Workspace-Id': workspaceId,
+        'Content-Type': 'application/json',
       },
     });
 
@@ -63,10 +87,46 @@ app.post('/api/publer/test', async (req, res) => {
   }
 
   try {
-    const response = await fetch('https://publer.io/api/v1/social_accounts', {
+    // First get workspaces to find workspace ID
+    const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer-API ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const wsText = await wsResponse.text();
+    if (wsText.trim().startsWith('<')) {
+      console.error('Publer workspaces returned HTML:', wsText.substring(0, 200));
+      return res.status(401).json({
+        error: 'Invalid API key or API access not enabled. Publer API requires Business or Enterprise plan.',
+        hint: 'Verify your API key and plan at app.publer.com/settings'
+      });
+    }
+
+    let workspaces;
+    try {
+      workspaces = JSON.parse(wsText);
+    } catch (e) {
+      return res.status(500).json({ error: 'Invalid response from Publer' });
+    }
+
+    if (!wsResponse.ok || !workspaces || workspaces.length === 0) {
+      return res.status(401).json({
+        error: workspaces?.message || 'No workspaces found. Check your API key.',
+      });
+    }
+
+    const workspaceId = workspaces[0].id;
+
+    // Now get social accounts with workspace ID
+    const response = await fetch('https://app.publer.com/api/v1/social_accounts', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer-API ${apiKey}`,
+        'Publer-Workspace-Id': workspaceId,
+        'Content-Type': 'application/json',
       },
     });
 
@@ -127,15 +187,49 @@ app.post('/api/publish', async (req, res) => {
   const publerPlatform = platformMap[post.platform];
 
   try {
+    // First get workspace ID
+    const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer-API ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const wsText = await wsResponse.text();
+    if (wsText.trim().startsWith('<')) {
+      return res.status(401).json({
+        error: 'Invalid API key or API access not enabled.',
+        hint: 'Publer API requires Business or Enterprise plan'
+      });
+    }
+
+    let workspaces;
+    try {
+      workspaces = JSON.parse(wsText);
+    } catch (e) {
+      return res.status(500).json({ error: 'Invalid response from Publer' });
+    }
+
+    if (!wsResponse.ok || !workspaces || workspaces.length === 0) {
+      return res.status(401).json({
+        error: workspaces?.message || 'No workspaces found'
+      });
+    }
+
+    const workspaceId = workspaces[0].id;
+
     // If no socialAccountId provided, try to find one
     let accountId = socialAccountId;
 
     if (!accountId) {
       // Fetch accounts to find matching platform
-      const accountsResponse = await fetch('https://publer.io/api/v1/social_accounts', {
+      const accountsResponse = await fetch('https://app.publer.com/api/v1/social_accounts', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer-API ${apiKey}`,
+          'Publer-Workspace-Id': workspaceId,
+          'Content-Type': 'application/json',
         },
       });
 
@@ -203,11 +297,12 @@ app.post('/api/publish', async (req, res) => {
         const base64Data = post.image.split(',')[1];
         const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
 
-        const uploadResponse = await fetch('https://publer.io/api/v1/media/upload_base64', {
+        const uploadResponse = await fetch('https://app.publer.com/api/v1/media/upload_base64', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+            'Authorization': `Bearer-API ${apiKey}`,
+            'Publer-Workspace-Id': workspaceId,
           },
           body: JSON.stringify({
             file: base64Data,
@@ -249,11 +344,12 @@ app.post('/api/publish', async (req, res) => {
 
     console.log('Publer payload:', { ...payload, media: payload.media ? '[media present]' : 'no media' });
 
-    const response = await fetch('https://publer.io/api/v1/posts', {
+    const response = await fetch('https://app.publer.com/api/v1/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer-API ${apiKey}`,
+        'Publer-Workspace-Id': workspaceId,
       },
       body: JSON.stringify(payload),
     });
