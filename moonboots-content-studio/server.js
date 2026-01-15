@@ -88,11 +88,31 @@ app.post('/api/publish', async (req, res) => {
         },
       });
 
-      const accounts = await accountsResponse.json();
+      // Get response as text first to handle HTML error pages
+      const accountsText = await accountsResponse.text();
+
+      // Check if response is HTML (error page - usually invalid API key)
+      if (accountsText.trim().startsWith('<')) {
+        console.error('Publer accounts API returned HTML:', accountsText.substring(0, 200));
+        return res.status(401).json({
+          error: 'Publer API key appears to be invalid. Please check your API key in Settings.',
+          hint: 'Get your API key from Publer → Settings → API Access'
+        });
+      }
+
+      let accounts;
+      try {
+        accounts = JSON.parse(accountsText);
+      } catch (parseErr) {
+        console.error('Failed to parse Publer accounts response:', accountsText.substring(0, 200));
+        return res.status(500).json({
+          error: 'Invalid response from Publer API',
+        });
+      }
 
       if (!accountsResponse.ok) {
         return res.status(accountsResponse.status).json({
-          error: 'Failed to fetch social accounts',
+          error: accounts.message || accounts.error || 'Failed to fetch social accounts',
           details: accounts
         });
       }
