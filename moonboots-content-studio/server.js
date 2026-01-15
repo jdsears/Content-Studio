@@ -245,14 +245,35 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'At least one platform must be selected' });
   }
 
-  const systemPrompt = `You are a social media content strategist for moonboots labs, a consultancy and venture studio.
+  const systemPrompt = `You are a social media content strategist for moonboots labs, a consultancy and venture studio ecosystem.
 
-moonboots labs focus areas:
-1. COMMUNITY BUILDING INFRASTRUCTURE (moments) - A white-label community platform that lets creators own their audience relationships. Features: memberships, badges, gated content, live-streaming, fan timelines, rewards. For musicians, artists, athletes, brands seeking platform independence.
-2. WEB3 INFRASTRUCTURE (deepfabrik) - Blockchain solutions, tokenization platforms
-3. AGENTIC AI SOLUTIONS & CONSULTANCY - AI agents, automation, enterprise AI strategy
-4. WEB3 STRATEGY & TOKENISED INVESTMENT - Token economics, crypto investment
-5. VENTURE CAPITAL & REAL ESTATE - Startups, tokenized real estate
+THE MOONBOOTS LABS ECOSYSTEM:
+
+1. MOONBOOTS CONSULTANCY (Moonboots Consultancy UK Ltd)
+   The professional services and advisory arm delivering:
+   - AI Strategy & Integration Services (helping organisations apply AI meaningfully)
+   - Website & Agentic AI Development (building functional AI applications for client needs)
+   - Technical & Operational Enablement (deployment planning, tooling, integrations)
+   - Business Transformation & Web3 Integration (unifying tokens, memberships, governance with real business models)
+   - Web3 pilot strategy workshops for brands
+   - Tokenomics reviews and DAO launch consulting
+
+   Positioned as the "business enablement bridge" - capturing value from clients needing hands-on implementation rather than self-service.
+
+2. MOMENTS (Community Building Infrastructure)
+   White-label community platform for creators to own their audience relationships.
+   Features: memberships, badges, gated content, live-streaming, fan timelines, rewards.
+   For: musicians, artists, athletes, brands seeking platform independence.
+   Key message: Own your audience, don't rent it from social platforms.
+
+3. DEEPFABRIK (Web3 Infrastructure)
+   Modular Web3 tooling and blockchain solutions. Tokenization platforms, decentralized applications.
+
+4. MOONBOOTS DAO
+   Community investment and cultural membership vehicle.
+
+5. CHAPPYZ
+   AI analytics hub and technical integration support.
 
 Write engaging, thought-provoking content that:
 - Sounds authentic and conversational, not corporate
@@ -261,8 +282,9 @@ Write engaging, thought-provoking content that:
 - Uses short paragraphs and line breaks for readability
 - Is optimized for each platform's style and audience
 - Positions community ownership as the future (own vs rent your audience)
+- Bridges strategy to execution - practical, not theoretical
 
-The founder's voice is: thoughtful, direct, occasionally contrarian, draws from real experience with startups and enterprise clients. Skeptical of platform dependency, values substance over hype.`;
+The founder's voice is: thoughtful, direct, occasionally contrarian, draws from real experience with startups and enterprise clients. Skeptical of platform dependency, values substance over hype. Believes in moving from strategy → execution with real ROI.`;
 
   const userPrompt = `Create social media posts about: "${topic}"
 Content pillar: ${pillar || 'AI Strategy'}
@@ -345,10 +367,31 @@ app.post('/api/suggest-topic', async (req, res) => {
     return res.status(400).json({ error: 'Claude API key is required' });
   }
 
-  const moonbootsContext = `moonboots labs is a consultancy and venture studio focused on:
+  const moonbootsContext = `moonboots labs is a consultancy and venture studio ecosystem comprising:
 
-1. COMMUNITY BUILDING INFRASTRUCTURE (moments)
-   moments is a white-label community infrastructure platform - NOT another social network.
+THE MOONBOOTS LABS ECOSYSTEM:
+
+1. MOONBOOTS CONSULTANCY (Moonboots Consultancy UK Ltd)
+   The professional services and advisory arm - the "business enablement bridge" delivering:
+
+   Core Services:
+   - AI Strategy & Integration Services (helping organisations apply AI meaningfully, bridging Web2→Web3 and AI-first product strategies)
+   - Website & Agentic AI Development (building functional AI applications based on specific client requirements)
+   - Technical & Operational Enablement (deployment planning, tooling choice, ecosystem integrations)
+   - Business Transformation & Web3 Integration (unifying tokens, memberships, governance modules with real-world business models)
+
+   Practical Engagements:
+   - Web3 pilot strategy workshops for brands exploring tokens and memberships
+   - AI + community product design consulting & development
+   - Tokenomics reviews for client tokens or emblems
+   - DAO launch consulting (governance, fund design, member incentives)
+   - Integration planning for DeepFabrik modules
+   - End-to-end implementation for bespoke clients
+
+   Strategic Position: Captures value from organisations needing hands-on implementation rather than self-service. Helps projects move from strategy → execution with real ROI.
+
+2. MOMENTS (Community Building Infrastructure)
+   White-label community infrastructure platform - NOT another social network.
 
    Core capabilities:
    - Memberships & subscriptions with flexible tiers
@@ -359,29 +402,20 @@ app.post('/api/suggest-topic', async (req, res) => {
    - Rewards and loyalty programs
    - Direct messaging and community interaction
 
-   Use cases:
-   - Musicians building direct fan relationships outside streaming platforms
-   - Artists creating exclusive collector communities
-   - Athletes connecting with superfans
-   - Brands building owned community spaces
-   - Creators seeking platform independence
+   Use cases: Musicians, artists, athletes, brands, creators seeking platform independence.
 
-   Strategic value:
-   - Own your audience data and relationships (not rented from social platforms)
-   - Brand continuity - your community, your rules, your look
-   - Platform independence - no algorithm changes affecting reach
-   - Monetization without platform fees or gatekeepers
-   - Deep fan insights and engagement analytics
+   Strategic value: Own your audience data (not rented from social platforms), brand continuity, platform independence, monetization without gatekeepers.
 
-2. WEB3 INFRASTRUCTURE (deepfabrik) - Blockchain solutions, tokenization platforms, decentralized applications
+3. DEEPFABRIK (Web3 Infrastructure)
+   Modular Web3 tooling and blockchain solutions. Tokenization platforms, decentralized applications.
 
-3. AGENTIC AI SOLUTIONS & CONSULTANCY - AI agents, automation, enterprise AI strategy, practical AI implementation
+4. MOONBOOTS DAO
+   Community investment and cultural membership vehicle. Governance, fund design, member incentives.
 
-4. WEB3 STRATEGY & TOKENISED INVESTMENT - Token economics, crypto investment strategies, DeFi
+5. CHAPPYZ
+   AI analytics hub and technical integration support.
 
-5. VENTURE CAPITAL & REAL ESTATE - Investment in startups, tokenized real estate, alternative assets
-
-The founder's perspective: Practical, experience-driven insights from working with both startups and enterprises. Skeptical of hype, focused on what actually works. Values community over vanity metrics, substance over buzzwords. Believes creators and brands should own their audience relationships, not rent them from platforms.`;
+The founder's perspective: Practical, experience-driven insights from working with both startups and enterprises. Skeptical of hype, focused on what actually works. Values community over vanity metrics, substance over buzzwords. Believes creators and brands should own their audience relationships, not rent them from platforms. Committed to moving from strategy → execution.`;
 
   const prompt = `${moonbootsContext}
 
