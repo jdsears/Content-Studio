@@ -1338,8 +1338,8 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
         <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
         <div className="space-y-3">
           {[
-            { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin'] },
-            { p: 'instagram', label: 'Instagram', publerPlatforms: ['instagram'] },
+            { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin', 'in_profile', 'in_'] },
+            { p: 'instagram', label: 'Instagram', publerPlatforms: ['instagram', 'ig_business', 'ig_'] },
             { p: 'x', label: 'X (Twitter)', publerPlatforms: ['twitter', 'x'], manual: true }
           ].map(({ p, label, publerPlatforms, manual }) => {
             const connectedAccount = publerStatus?.accountsList?.find(

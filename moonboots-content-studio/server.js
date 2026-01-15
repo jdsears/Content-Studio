@@ -199,14 +199,15 @@ app.post('/api/publish', async (req, res) => {
     return res.status(400).json({ error: 'Post data is required' });
   }
 
-  // Platform mapping for fetching accounts
-  const platformMap = {
-    linkedin: 'linkedin',
-    instagram: 'instagram',
-    x: 'twitter',
+  // Platform mapping for Publer's platform identifiers
+  // Publer uses: in_profile (LinkedIn), ig_business (Instagram), twitter (X)
+  const platformMatchers = {
+    linkedin: ['linkedin', 'in_profile', 'in_'],
+    instagram: ['instagram', 'ig_business', 'ig_'],
+    x: ['twitter', 'x'],
   };
 
-  const publerPlatform = platformMap[post.platform];
+  const matchers = platformMatchers[post.platform] || [post.platform];
 
   try {
     // First get workspace ID
@@ -284,16 +285,16 @@ app.post('/api/publish', async (req, res) => {
         });
       }
 
-      // Find account matching platform
-      const matchingAccount = accounts.find(acc =>
-        acc.platform === publerPlatform ||
-        acc.platform === post.platform
-      );
+      // Find account matching platform using matchers
+      const matchingAccount = accounts.find(acc => {
+        const accPlatform = (acc.platform || acc.social_network || acc.type || '').toLowerCase();
+        return matchers.some(m => accPlatform.includes(m.toLowerCase()));
+      });
 
       if (!matchingAccount) {
         return res.status(400).json({
           error: `No ${post.platform} account connected in Publer. Please connect your ${post.platform} account in Publer first.`,
-          availableAccounts: accounts.map(a => ({ id: a.id, platform: a.platform, name: a.name }))
+          availableAccounts: accounts.map(a => ({ id: a.id, platform: a.platform || a.social_network || a.type, name: a.name }))
         });
       }
 
