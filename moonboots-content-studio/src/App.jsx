@@ -1017,11 +1017,31 @@ const InsightsDashboard = ({ performance }) => {
 };
 
 // Approval Queue with images
-const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy }) => {
+const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy, onEdit, onDelete }) => {
   const pending = posts.filter(p => p.status === 'pending');
   const approved = posts.filter(p => p.status === 'approved' || p.status === 'publishing' || p.status === 'published');
   const rejected = posts.filter(p => p.status === 'rejected');
   const [expandedImage, setExpandedImage] = useState(null);
+  const [editingPost, setEditingPost] = useState(null);
+  const [editContent, setEditContent] = useState('');
+
+  const handleStartEdit = (post) => {
+    setEditingPost(post);
+    setEditContent(post.content);
+  };
+
+  const handleSaveEdit = () => {
+    if (editingPost && editContent.trim()) {
+      onEdit(editingPost.id, editContent);
+      setEditingPost(null);
+      setEditContent('');
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingPost(null);
+    setEditContent('');
+  };
 
   const PostCard = ({ post, showActions = true, showCopy = false }) => (
     <div className={`p-5 bg-slate-800/50 rounded-xl border ${post.status === 'pending' ? 'border-slate-700/50' : post.status === 'rejected' ? 'border-red-900/30' : 'border-green-900/30'}`}>
@@ -1070,21 +1090,19 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy }) =>
       {showActions && post.status === 'pending' && (
         <div className="flex items-center gap-2">
           <button onClick={() => onApprove(post.id)} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30">Approve</button>
-          <button className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
+          <button onClick={() => handleStartEdit(post)} className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
           <button onClick={() => onReject(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">Reject</button>
         </div>
       )}
 
-      {showCopy && post.status === 'approved' && (
+      {showCopy && (post.status === 'approved' || post.status === 'published' || post.status === 'rejected') && (
         <div className="flex items-center gap-2">
           <button onClick={() => onCopy(post)} className="px-4 py-2 text-sm bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 flex items-center gap-2">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-            Copy to Clipboard
+            Copy
           </button>
-          <a href="https://app.publer.io" target="_blank" rel="noopener noreferrer" className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700 flex items-center gap-2">
-            Open Publer
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-          </a>
+          <button onClick={() => handleStartEdit(post)} className="px-4 py-2 text-sm bg-slate-700/50 text-slate-300 rounded-lg hover:bg-slate-700">Edit</button>
+          <button onClick={() => onDelete(post.id)} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30">Delete</button>
         </div>
       )}
     </div>
@@ -1135,6 +1153,34 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy }) =>
           </h3>
           <div className="space-y-4">
             {rejected.map(post => <PostCard key={post.id} post={post} showActions={false} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editingPost && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-8" onClick={handleCancelEdit}>
+          <div className="bg-slate-800 rounded-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-white">Edit Post</h3>
+              <button onClick={handleCancelEdit} className="text-slate-400 hover:text-white">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex items-center gap-2 mb-4">
+              <PlatformIcon platform={editingPost.platform} className="w-5 h-5 text-slate-400" />
+              <span className="text-sm text-slate-400">{editingPost.platform}</span>
+            </div>
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              className="w-full h-64 px-4 py-3 bg-slate-900/50 border border-slate-700/50 rounded-lg text-white text-sm focus:outline-none focus:border-slate-500 resize-none"
+              placeholder="Edit your post content..."
+            />
+            <div className="flex items-center justify-end gap-3 mt-4">
+              <button onClick={handleCancelEdit} className="px-4 py-2 text-sm text-slate-400 hover:text-white">Cancel</button>
+              <button onClick={handleSaveEdit} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Changes</button>
+            </div>
           </div>
         </div>
       )}
@@ -1666,7 +1712,7 @@ export default function ContentStudio() {
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
           {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} />}
+          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
