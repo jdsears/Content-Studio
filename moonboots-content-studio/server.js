@@ -45,7 +45,7 @@ app.post('/api/publer/accounts', async (req, res) => {
     const workspaceId = workspaces[0].id;
 
     // Get social accounts
-    const response = await fetch('https://app.publer.com/api/v1/social_accounts', {
+    const response = await fetch('https://app.publer.com/api/v1/accounts', {
       method: 'GET',
       headers: {
         'Authorization': `Bearer-API ${apiKey}`,
@@ -97,11 +97,18 @@ app.post('/api/publer/test', async (req, res) => {
     });
 
     const wsText = await wsResponse.text();
+    console.log('Publer workspaces response status:', wsResponse.status);
+    console.log('Publer workspaces response:', wsText.substring(0, 500));
+
     if (wsText.trim().startsWith('<')) {
-      console.error('Publer workspaces returned HTML:', wsText.substring(0, 200));
+      // Extract any useful info from the HTML
+      const titleMatch = wsText.match(/<title>(.*?)<\/title>/i);
+      const errorTitle = titleMatch ? titleMatch[1] : 'Unknown error';
+      console.error('Publer returned HTML page:', errorTitle);
       return res.status(401).json({
-        error: 'Invalid API key or API access not enabled. Publer API requires Business or Enterprise plan.',
-        hint: 'Verify your API key and plan at app.publer.com/settings'
+        error: `Publer API error: ${errorTitle}. Check your API key format and plan.`,
+        hint: 'API key should be the full key from app.publer.com/settings',
+        debug: `Status: ${wsResponse.status}`
       });
     }
 
@@ -121,7 +128,7 @@ app.post('/api/publer/test', async (req, res) => {
     const workspaceId = workspaces[0].id;
 
     // Now get social accounts with workspace ID
-    const response = await fetch('https://app.publer.com/api/v1/social_accounts', {
+    const response = await fetch('https://app.publer.com/api/v1/accounts', {
       method: 'GET',
       headers: {
         'Authorization': `Bearer-API ${apiKey}`,
@@ -224,7 +231,7 @@ app.post('/api/publish', async (req, res) => {
 
     if (!accountId) {
       // Fetch accounts to find matching platform
-      const accountsResponse = await fetch('https://app.publer.com/api/v1/social_accounts', {
+      const accountsResponse = await fetch('https://app.publer.com/api/v1/accounts', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer-API ${apiKey}`,
