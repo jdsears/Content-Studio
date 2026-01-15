@@ -309,40 +309,56 @@ app.post('/api/publish', async (req, res) => {
     };
     const networkProvider = platformToNetwork[post.platform] || post.platform;
 
-    // Handle image upload if present
-    let mediaUrl = null;
+    // Handle image upload if present - Publer requires media ID, not URL
+    let mediaId = null;
     if (post.image && post.image.startsWith('data:')) {
-      // Upload image to Publer's media endpoint first
+      // Upload base64 image to Publer's media endpoint using multipart/form-data
       try {
         const base64Data = post.image.split(',')[1];
         const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
+        const extension = mimeType.split('/')[1] || 'png';
 
-        console.log('Uploading media to Publer...');
-        const uploadResponse = await fetch('https://app.publer.com/api/v1/media/upload_base64', {
+        // Convert base64 to buffer
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        // Create form data with the file
+        const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+        const filename = `image_${Date.now()}.${extension}`;
+
+        const bodyParts = [
+          `--${boundary}\r\n`,
+          `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`,
+          `Content-Type: ${mimeType}\r\n\r\n`,
+        ];
+
+        const bodyStart = Buffer.from(bodyParts.join(''));
+        const bodyEnd = Buffer.from(`\r\n--${boundary}--\r\n`);
+        const body = Buffer.concat([bodyStart, buffer, bodyEnd]);
+
+        console.log('Uploading media to Publer (multipart)...');
+        const uploadResponse = await fetch('https://app.publer.com/api/v1/media', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
             'Authorization': `Bearer-API ${apiKey}`,
             'Publer-Workspace-Id': workspaceId,
           },
-          body: JSON.stringify({
-            file: base64Data,
-            content_type: mimeType,
-          }),
+          body: body,
         });
 
         const uploadText = await uploadResponse.text();
+        console.log('Media upload response:', uploadText.substring(0, 500));
 
         // Check if response is HTML (error page)
         if (uploadText.trim().startsWith('<')) {
-          console.error('Publer media upload returned HTML:', uploadText.substring(0, 200));
+          console.error('Publer media upload returned HTML error');
           // Continue without image
         } else {
           try {
             const uploadData = JSON.parse(uploadText);
-            if (uploadResponse.ok && uploadData.url) {
-              mediaUrl = uploadData.url;
-              console.log('Media uploaded successfully:', mediaUrl);
+            if (uploadResponse.ok && uploadData.id) {
+              mediaId = uploadData.id;
+              console.log('Media uploaded successfully, ID:', mediaId);
             } else {
               console.error('Publer media upload failed:', uploadData);
             }
@@ -355,19 +371,43 @@ app.post('/api/publish', async (req, res) => {
         // Continue without image
       }
     } else if (post.image) {
-      // Use URL directly
-      mediaUrl = post.image;
+      // Upload from URL using Publer's from-url endpoint
+      try {
+        console.log('Uploading media from URL to Publer...');
+        const uploadResponse = await fetch('https://app.publer.com/api/v1/media/from-url', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer-API ${apiKey}`,
+            'Publer-Workspace-Id': workspaceId,
+          },
+          body: JSON.stringify({ url: post.image }),
+        });
+
+        const uploadText = await uploadResponse.text();
+        console.log('Media from-url response:', uploadText.substring(0, 500));
+
+        if (!uploadText.trim().startsWith('<')) {
+          const uploadData = JSON.parse(uploadText);
+          if (uploadResponse.ok && uploadData.id) {
+            mediaId = uploadData.id;
+            console.log('Media uploaded from URL, ID:', mediaId);
+          }
+        }
+      } catch (uploadError) {
+        console.error('Media from-url error:', uploadError);
+      }
     }
 
     // Build network-specific content
     const networkContent = {
-      type: mediaUrl ? 'photo' : 'status',
+      type: mediaId ? 'photo' : 'status',
       text: post.content,
     };
 
-    // Add photos array if we have media
-    if (mediaUrl) {
-      networkContent.photos = [mediaUrl];
+    // Add media array with ID if we have it (Publer format)
+    if (mediaId) {
+      networkContent.media = [{ id: mediaId, type: 'photo' }];
     }
 
     // Build account entry with optional scheduling
