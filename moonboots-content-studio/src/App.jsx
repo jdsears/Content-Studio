@@ -1017,7 +1017,7 @@ const InsightsDashboard = ({ performance }) => {
 };
 
 // Approval Queue with images
-const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy, onEdit, onDelete }) => {
+const ApprovalQueue = ({ posts, onApprove, onReject, onUnapprove, onRemoveImage, onCopy, onEdit, onDelete }) => {
   const pending = posts.filter(p => p.status === 'pending');
   const approved = posts.filter(p => p.status === 'approved' || p.status === 'publishing' || p.status === 'published');
   const rejected = posts.filter(p => p.status === 'rejected');
@@ -1096,7 +1096,13 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onRemoveImage, onCopy, onEd
       )}
 
       {showCopy && (post.status === 'approved' || post.status === 'published' || post.status === 'rejected') && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {post.status === 'approved' && (
+            <button onClick={() => onUnapprove(post.id)} className="px-4 py-2 text-sm bg-yellow-500/20 text-yellow-400 rounded-lg hover:bg-yellow-500/30 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+              Return to Queue
+            </button>
+          )}
           <button onClick={() => onCopy(post)} className="px-4 py-2 text-sm bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 flex items-center gap-2">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
             Copy
@@ -1748,7 +1754,7 @@ export default function ContentStudio() {
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
           {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />}
+          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onUnapprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'pending', approvedAt: null, error: null } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
