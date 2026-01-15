@@ -301,16 +301,13 @@ app.post('/api/publish', async (req, res) => {
       accountId = matchingAccount.id;
     }
 
-    // Build Publer payload with social_account_ids
-    const payload = {
-      text: post.content,
-      social_account_ids: [accountId],
+    // Map platform to Publer network provider
+    const platformToNetwork = {
+      linkedin: 'linkedin',
+      instagram: 'instagram',
+      x: 'twitter',
     };
-
-    // Add scheduling if specified
-    if (post.scheduledFor) {
-      payload.scheduled_at = new Date(post.scheduledFor).toISOString();
-    }
+    const networkProvider = platformToNetwork[post.platform] || post.platform;
 
     // Handle image upload if present
     let mediaUrl = null;
@@ -320,6 +317,7 @@ app.post('/api/publish', async (req, res) => {
         const base64Data = post.image.split(',')[1];
         const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
 
+        console.log('Uploading media to Publer...');
         const uploadResponse = await fetch('https://app.publer.com/api/v1/media/upload_base64', {
           method: 'POST',
           headers: {
@@ -344,6 +342,7 @@ app.post('/api/publish', async (req, res) => {
             const uploadData = JSON.parse(uploadText);
             if (uploadResponse.ok && uploadData.url) {
               mediaUrl = uploadData.url;
+              console.log('Media uploaded successfully:', mediaUrl);
             } else {
               console.error('Publer media upload failed:', uploadData);
             }
@@ -360,32 +359,76 @@ app.post('/api/publish', async (req, res) => {
       mediaUrl = post.image;
     }
 
-    // Add media to payload if we have it
+    // Build network-specific content
+    const networkContent = {
+      type: mediaUrl ? 'photo' : 'status',
+      text: post.content,
+    };
+
+    // Add photos array if we have media
     if (mediaUrl) {
-      payload.media = [{ url: mediaUrl }];
+      networkContent.photos = [mediaUrl];
     }
 
-    console.log('Publer payload:', { ...payload, media: payload.media ? '[media present]' : 'no media' });
+    // Build account entry with optional scheduling
+    const accountEntry = {
+      id: accountId,
+    };
+    if (post.scheduledFor) {
+      accountEntry.scheduled_at = new Date(post.scheduledFor).toISOString();
+    }
 
-    const response = await fetch('https://app.publer.com/api/v1/posts', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer-API ${apiKey}`,
-        'Publer-Workspace-Id': workspaceId,
+    // Build the correct Publer bulk payload format
+    const payload = {
+      bulk: {
+        state: post.scheduledFor ? 'scheduled' : 'scheduled', // scheduled for both (immediate posts also use scheduled with current time)
+        posts: [
+          {
+            networks: {
+              [networkProvider]: networkContent,
+            },
+            accounts: [accountEntry],
+          },
+        ],
       },
+    };
+
+    // If no scheduled time, schedule for 1 minute from now (Publer requires future time)
+    if (!post.scheduledFor) {
+      const oneMinuteFromNow = new Date(Date.now() + 60 * 1000).toISOString();
+      payload.bulk.posts[0].accounts[0].scheduled_at = oneMinuteFromNow;
+    }
+
+    console.log('Publer payload:', JSON.stringify(payload, null, 2));
+    console.log('Publishing to Publer with workspaceId:', workspaceId, 'accountId:', accountId);
+
+    const postUrl = 'https://app.publer.com/api/v1/posts/schedule';
+    const postHeaders = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer-API ${apiKey}`,
+      'Publer-Workspace-Id': workspaceId,
+    };
+
+    console.log('POST URL:', postUrl);
+
+    const response = await fetch(postUrl, {
+      method: 'POST',
+      headers: postHeaders,
       body: JSON.stringify(payload),
     });
 
     // Handle potential HTML error responses
     const responseText = await response.text();
+    console.log('Publer response status:', response.status);
+    console.log('Publer response:', responseText.substring(0, 500));
 
     // Check if response is HTML (error page)
     if (responseText.trim().startsWith('<')) {
-      console.error('Publer API returned HTML:', responseText.substring(0, 200));
+      console.error('Publer API returned HTML error page');
       return res.status(500).json({
         error: 'Publer API returned an error page. Please check your API key and try again.',
-        hint: 'Your Publer API key may be invalid or expired.'
+        hint: 'Your Publer API key may be invalid or expired.',
+        debug: `Status: ${response.status}`
       });
     }
 
@@ -408,7 +451,8 @@ app.post('/api/publish', async (req, res) => {
       });
     }
 
-    res.json({ success: true, data });
+    // Publer returns a job_id for async operations
+    res.json({ success: true, data, jobId: data.job_id });
   } catch (error) {
     console.error('Publer publish failed:', error);
     res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
