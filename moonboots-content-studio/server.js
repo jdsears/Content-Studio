@@ -2,6 +2,7 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createClient } from '@supabase/supabase-js';
+import sharp from 'sharp';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -925,109 +926,356 @@ Return ONLY the topic text, nothing else. No quotes, no explanation. Just the to
   }
 });
 
-// OpenAI Image API proxy (using gpt-image-1)
-app.post('/api/generate-image', async (req, res) => {
-  const { apiKey, prompt, platform } = req.body;
+// ============ IMAGE GENERATION ENDPOINTS (Replicate + Claude) ============
 
-  console.log('Generate image request for platform:', platform);
+// Generate optimized image prompt using Claude
+app.post('/api/generate-image-prompt', async (req, res) => {
+  const { apiKey, postContent, platform, style = 'modern professional' } = req.body;
 
-  if (!apiKey) {
-    console.error('No OpenAI API key provided');
-    return res.status(400).json({ error: 'OpenAI API key is required. Please add your OpenAI API key in Settings and ensure API billing is enabled at platform.openai.com' });
+  if (!apiKey || !postContent) {
+    return res.status(400).json({ error: 'API key and post content required' });
   }
 
-  if (!prompt) {
-    return res.status(400).json({ error: 'Prompt is required' });
-  }
+  const systemPrompt = `You are an expert at creating image generation prompts for social media posts.
 
-  // Platform-specific sizes for gpt-image-1
-  // Supported sizes: 1024x1024, 1536x1024 (landscape), 1024x1536 (portrait)
-  let size;
-  if (platform === 'instagram') {
-    size = '1024x1536'; // Portrait for Instagram (4:5 ratio)
-  } else {
-    // Landscape for LinkedIn and X/Twitter
-    size = '1536x1024';
-  }
-  console.log('Using gpt-image-1 with size:', size, 'for platform:', platform);
+Your task is to create a detailed prompt for an AI image generator (Flux) that will complement the social media post provided.
+
+Guidelines:
+- Create visually striking, professional images suitable for ${platform}
+- Avoid text in the image (text will be overlaid separately)
+- Focus on mood, atmosphere, and visual metaphor
+- Use specific details: lighting, composition, color palette, style
+- Keep it abstract/conceptual rather than literal where appropriate
+- Never include people's faces or identifiable individuals
+- Aim for images that work well with text overlay
+- Use dark/moody backgrounds that contrast well with white text
+
+Style preference: ${style}
+
+Output ONLY the image prompt, nothing else. No explanations, no preamble.`;
 
   try {
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'gpt-image-1',
-        prompt: prompt,
-        n: 1,
-        size: size,
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: `Create an image prompt for this ${platform} post:\n\n"${postContent}"`
+        }],
       }),
     });
 
-    // Get response as text first to handle potential HTML error pages
-    const responseText = await response.text();
-
-    // Check for HTML error page
-    if (responseText.trim().startsWith('<')) {
-      console.error('OpenAI API returned HTML:', responseText.substring(0, 200));
-      return res.status(500).json({
-        error: 'OpenAI API returned an error page. Please check your API key and ensure API billing is enabled.',
-      });
-    }
-
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseErr) {
-      console.error('Failed to parse OpenAI response:', responseText.substring(0, 200));
-      return res.status(500).json({
-        error: 'Invalid response from OpenAI API',
-        raw: responseText.substring(0, 200)
-      });
-    }
-
     if (!response.ok) {
-      console.error('OpenAI API error:', data);
-      return res.status(response.status).json({
-        error: data.error?.message || 'Failed to generate image. Ensure API billing is enabled at platform.openai.com',
-        details: data
+      const error = await response.text();
+      console.error('Claude API error:', error);
+      return res.status(response.status).json({ error: 'Failed to generate image prompt' });
+    }
+
+    const data = await response.json();
+    const prompt = data.content?.[0]?.text?.trim();
+
+    res.json({ imagePrompt: prompt });
+
+  } catch (error) {
+    console.error('Generate image prompt failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Generate image using Replicate (Flux Schnell)
+app.post('/api/generate-image', async (req, res) => {
+  const { replicateApiKey, prompt, aspectRatio = '1:1' } = req.body;
+
+  if (!replicateApiKey || !prompt) {
+    return res.status(400).json({ error: 'Replicate API key and prompt required' });
+  }
+
+  // Map aspect ratios for different platforms
+  const aspectRatios = {
+    'square': '1:1',      // Instagram feed
+    'portrait': '4:5',    // Instagram optimal
+    'landscape': '16:9',  // X/Twitter, LinkedIn
+    'story': '9:16'       // Instagram stories
+  };
+
+  const ratio = aspectRatios[aspectRatio] || aspectRatio;
+  console.log('Generating image with Replicate, aspect ratio:', ratio);
+
+  try {
+    // Start prediction with Flux Schnell
+    const startResponse = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${replicateApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: {
+          prompt: prompt,
+          aspect_ratio: ratio,
+          output_format: 'webp',
+          output_quality: 90,
+        }
+      }),
+    });
+
+    if (!startResponse.ok) {
+      const error = await startResponse.json().catch(() => ({}));
+      console.error('Replicate start error:', error);
+      return res.status(startResponse.status).json({
+        error: error.detail || error.error || 'Failed to start image generation'
       });
     }
 
-    // gpt-image-1 returns b64_json by default
-    const base64Image = data.data?.[0]?.b64_json;
-    if (!base64Image) {
-      // Fallback: check if URL was returned instead
-      const imageUrl = data.data?.[0]?.url;
-      if (imageUrl) {
-        // Fetch the image and convert to base64
-        try {
-          const imgResponse = await fetch(imageUrl);
-          const imgBuffer = await imgResponse.arrayBuffer();
-          const base64 = Buffer.from(imgBuffer).toString('base64');
-          console.log('Image generated successfully for', platform, '(from URL)');
-          return res.json({
-            success: true,
-            image: `data:image/png;base64,${base64}`
-          });
-        } catch (imgErr) {
-          console.error('Failed to fetch image from URL:', imgErr);
-        }
+    const prediction = await startResponse.json();
+    console.log('Replicate prediction started:', prediction.id);
+
+    // Poll for completion
+    let result = prediction;
+    let attempts = 0;
+    const maxAttempts = 60; // 60 seconds max
+
+    while (result.status !== 'succeeded' && result.status !== 'failed' && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const pollResponse = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
+        headers: { 'Authorization': `Bearer ${replicateApiKey}` }
+      });
+
+      result = await pollResponse.json();
+      attempts++;
+
+      if (attempts % 5 === 0) {
+        console.log('Replicate status:', result.status, 'attempts:', attempts);
       }
-      console.error('No image in response:', data);
-      return res.status(500).json({ error: 'No image generated by OpenAI' });
     }
 
-    console.log('Image generated successfully for', platform);
+    if (result.status === 'failed') {
+      console.error('Replicate generation failed:', result.error);
+      return res.status(500).json({ error: result.error || 'Image generation failed' });
+    }
+
+    if (result.status !== 'succeeded') {
+      return res.status(408).json({ error: 'Image generation timed out' });
+    }
+
+    // Flux returns array of URLs
+    const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output;
+    console.log('Image generated successfully');
+
+    // Fetch image and convert to base64 for consistency with frontend
+    try {
+      const imgResponse = await fetch(imageUrl);
+      const imgBuffer = await imgResponse.arrayBuffer();
+      const base64 = Buffer.from(imgBuffer).toString('base64');
+
+      res.json({
+        success: true,
+        image: `data:image/webp;base64,${base64}`,
+        imageUrl: imageUrl,
+        predictionId: result.id
+      });
+    } catch (fetchErr) {
+      // Return URL if fetch fails
+      res.json({
+        success: true,
+        imageUrl: imageUrl,
+        predictionId: result.id
+      });
+    }
+
+  } catch (error) {
+    console.error('Replicate image generation failed:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate image' });
+  }
+});
+
+// Add text overlay to image using Sharp
+app.post('/api/add-text-overlay', async (req, res) => {
+  const {
+    imageUrl,
+    overlayText,
+    position = 'center',  // top, center, bottom
+    style = 'default'     // default, bold, minimal, gradient
+  } = req.body;
+
+  if (!imageUrl || !overlayText) {
+    return res.status(400).json({ error: 'Image URL and overlay text required' });
+  }
+
+  try {
+    // Fetch the image (handle both URLs and base64)
+    let imageBuffer;
+    if (imageUrl.startsWith('data:')) {
+      const base64Data = imageUrl.split(',')[1];
+      imageBuffer = Buffer.from(base64Data, 'base64');
+    } else {
+      const imageResponse = await fetch(imageUrl);
+      imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+    }
+
+    // Get image dimensions
+    const metadata = await sharp(imageBuffer).metadata();
+    const { width, height } = metadata;
+
+    // Calculate text positioning
+    const padding = Math.round(width * 0.08);
+    const maxTextWidth = width - (padding * 2);
+
+    // Position Y based on selection
+    const positions = {
+      top: Math.round(height * 0.15),
+      center: Math.round(height * 0.5),
+      bottom: Math.round(height * 0.85)
+    };
+    const textY = positions[position] || positions.center;
+
+    // Style configurations
+    const styles = {
+      default: {
+        fontSize: Math.round(width * 0.055),
+        fontWeight: 600,
+        fill: '#FFFFFF',
+        shadow: true,
+        background: 'rgba(0,0,0,0.4)',
+        backgroundPadding: 20
+      },
+      bold: {
+        fontSize: Math.round(width * 0.07),
+        fontWeight: 700,
+        fill: '#FFFFFF',
+        shadow: true,
+        background: 'rgba(0,0,0,0.6)',
+        backgroundPadding: 30
+      },
+      minimal: {
+        fontSize: Math.round(width * 0.05),
+        fontWeight: 400,
+        fill: '#FFFFFF',
+        shadow: true,
+        background: 'none',
+        backgroundPadding: 0
+      },
+      gradient: {
+        fontSize: Math.round(width * 0.055),
+        fontWeight: 600,
+        fill: '#FFFFFF',
+        shadow: false,
+        background: 'gradient',
+        backgroundPadding: 40
+      }
+    };
+
+    const currentStyle = styles[style] || styles.default;
+
+    // Word wrap text
+    const words = overlayText.split(' ');
+    const lines = [];
+    let currentLine = '';
+    const charsPerLine = Math.floor(maxTextWidth / (currentStyle.fontSize * 0.55));
+
+    words.forEach(word => {
+      if ((currentLine + ' ' + word).trim().length <= charsPerLine) {
+        currentLine = (currentLine + ' ' + word).trim();
+      } else {
+        if (currentLine) lines.push(currentLine);
+        currentLine = word;
+      }
+    });
+    if (currentLine) lines.push(currentLine);
+
+    // Build SVG overlay
+    const lineHeight = currentStyle.fontSize * 1.4;
+    const textBlockHeight = lines.length * lineHeight;
+    const textStartY = textY - (textBlockHeight / 2);
+
+    // Escape XML special characters
+    const escapeXml = (text) => text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+
+    let backgroundSvg = '';
+    if (currentStyle.background === 'gradient') {
+      backgroundSvg = `
+        <defs>
+          <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:rgba(0,0,0,0)"/>
+            <stop offset="50%" style="stop-color:rgba(0,0,0,0.7)"/>
+            <stop offset="100%" style="stop-color:rgba(0,0,0,0)"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="${textStartY - currentStyle.backgroundPadding}"
+              width="${width}" height="${textBlockHeight + currentStyle.backgroundPadding * 2}"
+              fill="url(#grad)"/>
+      `;
+    } else if (currentStyle.background !== 'none') {
+      backgroundSvg = `
+        <rect x="${padding - currentStyle.backgroundPadding}"
+              y="${textStartY - currentStyle.backgroundPadding}"
+              width="${maxTextWidth + currentStyle.backgroundPadding * 2}"
+              height="${textBlockHeight + currentStyle.backgroundPadding * 2}"
+              rx="8" ry="8"
+              fill="${currentStyle.background}"/>
+      `;
+    }
+
+    const textSvg = lines.map((line, i) => {
+      const y = textStartY + (i * lineHeight) + currentStyle.fontSize;
+      const shadow = currentStyle.shadow
+        ? `style="filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.8))"`
+        : '';
+      return `<text x="${width / 2}" y="${y}"
+                    font-family="Arial, Helvetica, sans-serif"
+                    font-size="${currentStyle.fontSize}"
+                    font-weight="${currentStyle.fontWeight}"
+                    fill="${currentStyle.fill}"
+                    text-anchor="middle"
+                    ${shadow}>${escapeXml(line)}</text>`;
+    }).join('\n');
+
+    const svgOverlay = `
+      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        ${backgroundSvg}
+        ${textSvg}
+      </svg>
+    `;
+
+    // Composite image with overlay
+    const outputBuffer = await sharp(imageBuffer)
+      .composite([{
+        input: Buffer.from(svgOverlay),
+        top: 0,
+        left: 0,
+      }])
+      .webp({ quality: 90 })
+      .toBuffer();
+
+    // Convert to base64 data URL
+    const base64 = outputBuffer.toString('base64');
+    const dataUrl = `data:image/webp;base64,${base64}`;
+
+    console.log('Text overlay applied successfully');
     res.json({
       success: true,
-      image: `data:image/png;base64,${base64Image}`
+      image: dataUrl,
+      width,
+      height
     });
+
   } catch (error) {
-    console.error('OpenAI image generation failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to connect to OpenAI' });
+    console.error('Text overlay error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

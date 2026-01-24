@@ -242,38 +242,54 @@ const getNextTimeSlots = (platform, count = 5) => {
   return slots;
 };
 
-// Generate AI image using OpenAI DALL-E via backend proxy
-const generateAIImage = async (content, platform, apiKey) => {
-  // Extract the main idea from the content for the prompt
-  const firstLine = content.split('\n')[0].trim();
-  // Remove any quotes or special chars that might confuse the prompt
-  const cleanConcept = firstLine.replace(/["""'']/g, '').substring(0, 100);
-  const prompt = `Abstract minimalist artwork. Geometric shapes, subtle gradients, sophisticated dark blue and slate color palette. The visual mood should evoke: ${cleanConcept}. IMPORTANT: Do NOT include any text, words, letters, numbers, typography, writing, labels, or captions anywhere in the image. Pure abstract visual art only. Clean, professional, high quality.`;
-
+// Generate AI image using Claude + Replicate (Flux Schnell)
+const generateAIImage = async (content, platform, claudeApiKey, replicateApiKey) => {
+  // Step 1: Generate optimized image prompt using Claude
+  let imagePrompt;
   try {
-    const response = await fetch('/api/generate-image', {
+    const promptResponse = await fetch('/api/generate-image-prompt', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        apiKey,
-        prompt,
+        apiKey: claudeApiKey,
+        postContent: content,
         platform,
+        style: 'modern professional, dark moody backgrounds'
       }),
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to generate image');
+    const promptData = await promptResponse.json();
+    if (!promptResponse.ok) {
+      throw new Error(promptData.error || 'Failed to generate image prompt');
     }
-
-    return data.image;
+    imagePrompt = promptData.imagePrompt;
   } catch (error) {
-    console.error('AI image generation failed:', error);
-    throw error;
+    // Fallback to basic prompt if Claude fails
+    console.warn('Claude prompt generation failed, using fallback:', error);
+    const firstLine = content.split('\n')[0].trim().substring(0, 100);
+    imagePrompt = `Abstract minimalist professional artwork. Dark moody background with subtle gradients. Visual mood: ${firstLine}. No text, no words, no typography. Clean modern design.`;
   }
+
+  // Step 2: Generate image using Replicate (Flux Schnell)
+  const aspectRatio = platform === 'instagram' ? 'portrait' : 'landscape';
+
+  const response = await fetch('/api/generate-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      replicateApiKey,
+      prompt: imagePrompt,
+      aspectRatio,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to generate image');
+  }
+
+  return data.image || data.imageUrl;
 };
 
 // Template themes with colors
@@ -401,14 +417,14 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       try {
         let imageUrl;
         if (imgSettings.type === 'ai') {
-          if (!settings.openaiApiKey) {
-            console.warn(`No OpenAI API key configured, using template for ${platform}`);
-            alert(`OpenAI API key not configured. Using template for ${platform} image.`);
+          if (!settings.replicateApiKey) {
+            console.warn(`No Replicate API key configured, using template for ${platform}`);
+            alert(`Replicate API key not configured. Using template for ${platform} image.`);
             imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
           } else {
-            // AI image generation using OpenAI DALL-E
+            // AI image generation using Claude + Replicate
             try {
-              imageUrl = await generateAIImage(content[platform], platform, settings.openaiApiKey);
+              imageUrl = await generateAIImage(content[platform], platform, settings.claudeApiKey, settings.replicateApiKey);
             } catch (error) {
               console.error(`AI image generation failed for ${platform}:`, error);
               alert(`AI image generation failed for ${platform}: ${error.message}. Using template instead.`);
@@ -438,9 +454,9 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
     const imgSettings = platformImageSettings[platform];
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
 
-    if (imgSettings.type === 'ai' && settings.openaiApiKey) {
+    if (imgSettings.type === 'ai' && settings.replicateApiKey) {
       try {
-        const imageUrl = await generateAIImage(content, platform, settings.openaiApiKey);
+        const imageUrl = await generateAIImage(content, platform, settings.claudeApiKey, settings.replicateApiKey);
         setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
       } catch (error) {
         console.error(`AI image regeneration failed for ${platform}:`, error);
@@ -652,8 +668,8 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
                               AI Generated
                             </button>
                           </div>
-                          {imgSettings.type === 'ai' && !settings.openaiApiKey && (
-                            <p className="text-xs text-yellow-400 mt-1">OpenAI API key required for AI images</p>
+                          {imgSettings.type === 'ai' && !settings.replicateApiKey && (
+                            <p className="text-xs text-yellow-400 mt-1">Replicate API key required for AI images</p>
                           )}
                         </div>
 
@@ -1479,14 +1495,15 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
         <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-slate-500 mb-1 block">OpenAI API Key (for AI images)</label>
+            <label className="text-xs text-slate-500 mb-1 block">Replicate API Key (for AI images)</label>
             <input
               type="password"
-              value={settings.openaiApiKey || ''}
-              onChange={(e) => handleChange('openaiApiKey', e.target.value)}
-              placeholder="sk-..."
+              value={settings.replicateApiKey || ''}
+              onChange={(e) => handleChange('replicateApiKey', e.target.value)}
+              placeholder="r8_..."
               className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
             />
+            <p className="text-xs text-slate-600 mt-1">Get at replicate.com/account/api-tokens (~$0.003/image)</p>
           </div>
           <div>
             <label className="text-xs text-slate-500 mb-1 block">Claude API Key (for content generation)</label>
@@ -1583,7 +1600,7 @@ export default function ContentStudio() {
       return saved ? JSON.parse(saved) : {
         publerApiKey: '',
         publerWorkspaceId: '',
-        openaiApiKey: '',
+        replicateApiKey: '',
         claudeApiKey: '',
         autoSchedule: true,
         includeImages: true,
@@ -1594,7 +1611,7 @@ export default function ContentStudio() {
       return {
         publerApiKey: '',
         publerWorkspaceId: '',
-        openaiApiKey: '',
+        replicateApiKey: '',
         claudeApiKey: '',
         autoSchedule: true,
         includeImages: true,
