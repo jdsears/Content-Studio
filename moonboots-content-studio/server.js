@@ -1,12 +1,133 @@
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { createClient } from '@supabase/supabase-js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Initialize Supabase client (if configured)
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+  : null;
+
+// ============ CONTEXT HELPER FUNCTIONS ============
+
+// Fetch all context for prompt building
+async function getGenerationContext(userId = 'default') {
+  if (!supabase) {
+    // Return hardcoded defaults if Supabase not configured
+    return getDefaultContext();
+  }
+
+  const [profileResult, venturesResult, pillarsResult, storiesResult] = await Promise.all([
+    supabase.from('context_profile').select('*').eq('user_id', userId).single(),
+    supabase.from('ventures').select('*').eq('user_id', userId).eq('include_in_posts', true).order('sort_order'),
+    supabase.from('content_pillars').select('*').eq('user_id', userId).eq('active', true).order('sort_order'),
+    supabase.from('story_bank').select('*').eq('user_id', userId).order('times_used', { ascending: true }).limit(3)
+  ]);
+
+  // Fall back to defaults if no data found
+  if (!profileResult.data && !venturesResult.data?.length) {
+    return getDefaultContext();
+  }
+
+  return {
+    profile: profileResult.data,
+    ventures: venturesResult.data || [],
+    pillars: pillarsResult.data || [],
+    stories: storiesResult.data || []
+  };
+}
+
+// Default context (used when Supabase not configured)
+function getDefaultContext() {
+  return {
+    profile: {
+      about_me: 'Founder of MoonBoots Consultancy, a strategic advisory firm helping businesses cut through AI and Web3 hype with practical strategy that actually ships. Grassroots football coach. Dad of 3.',
+      background: 'Former enterprise consultant turned founder. Built multiple AI-powered products including Touchline (AI coaching platform). Deep experience bridging strategy to execution for startups and enterprise clients.',
+      tone_keywords: ['direct', 'conversational', 'no jargon', 'occasionally contrarian', 'uses analogies'],
+      avoid_words: ['synergy', 'leverage', 'disrupt', 'Web3 native', 'paradigm shift', 'move the needle', 'circle back'],
+      signature_phrases: ['clarity over hype', 'own vs rent your audience', 'strategy to execution', 'practical, not theoretical']
+    },
+    ventures: [
+      { name: 'MoonBoots Consultancy', website: 'moonbootsconsultancy.net', description: 'Professional services and advisory arm delivering AI strategy, agentic AI development, business transformation and Web3 integration.', key_messages: ['Business enablement bridge', 'Hands-on implementation', 'AI strategy that ships'] },
+      { name: 'Touchline', website: 'touchline.xyz', description: 'AI-powered coaching platform for grassroots football coaches. Tactical analysis, training session generation, player development tools.', key_messages: ['AI for real coaches', 'Grassroots football deserves better tools'] },
+      { name: 'Moments', website: null, description: 'White-label community platform for creators to own their audience relationships. Memberships, badges, gated content, live-streaming.', key_messages: ['Own your audience, dont rent it', 'Platform independence'] },
+      { name: 'DeepFabrik', website: null, description: 'Modular Web3 tooling and blockchain solutions. Tokenization platforms, decentralized applications.', key_messages: ['Web3 infrastructure', 'Tokenization done right'] }
+    ],
+    pillars: [
+      { name: 'AI Strategy', description: 'Practical AI implementation without the hype', example_angles: ['AI tools that actually save time', 'When NOT to use AI', 'AI strategy vs AI theatre'] },
+      { name: 'Community Ownership', description: 'Own vs rent your audience - platform independence', example_angles: ['Creator platform dependency risks', 'Building owned audiences'] },
+      { name: 'Building in Public', description: 'Lessons from building MoonBoots ecosystem', example_angles: ['What I learned this week', 'Founder lessons', 'Shipping over perfecting'] },
+      { name: 'Sport & Culture', description: 'Leadership, coaching mindset, football', example_angles: ['Football coaching parallels', 'Team culture', 'Grassroots sport'] }
+    ],
+    stories: []
+  };
+}
+
+// Build dynamic system prompt from context
+function buildSystemPrompt(context, selectedPillar) {
+  const { profile, ventures, stories } = context;
+
+  // Build ventures section
+  const venturesText = ventures.map((v, i) => {
+    let text = `${i + 1}. ${v.name.toUpperCase()}`;
+    if (v.website) text += `\n   Website: ${v.website}`;
+    text += `\n   ${v.description}`;
+    if (v.key_messages?.length) {
+      text += `\n   Key messages: ${v.key_messages.join(', ')}`;
+    }
+    return text;
+  }).join('\n\n');
+
+  // Build stories section
+  const storiesText = stories.length > 0
+    ? `\n\nREAL STORIES TO REFERENCE (use naturally, don't force):\n${stories.map(s => `- ${s.title}: "${s.story}"`).join('\n')}`
+    : '';
+
+  // Build tone instructions
+  const toneText = profile?.tone_keywords?.length
+    ? `Voice characteristics: ${profile.tone_keywords.join(', ')}`
+    : 'Voice: direct, conversational, no jargon';
+
+  const avoidText = profile?.avoid_words?.length
+    ? `\n\nNEVER use these words/phrases: ${profile.avoid_words.join(', ')}`
+    : '';
+
+  const phrasesText = profile?.signature_phrases?.length
+    ? `\n\nSignature phrases to use naturally: ${profile.signature_phrases.join(', ')}`
+    : '';
+
+  return `You are writing social media content as the founder of the MoonBoots Labs ecosystem.
+
+ABOUT THE FOUNDER:
+${profile?.about_me || 'Founder and consultant helping businesses with AI and Web3 strategy.'}
+
+${profile?.background || ''}
+
+THE MOONBOOTS LABS ECOSYSTEM:
+
+${venturesText}
+${storiesText}
+
+VOICE AND TONE:
+${toneText}
+${avoidText}
+${phrasesText}
+
+CONTENT GUIDELINES:
+- Sound authentic and conversational, not corporate
+- Share genuine insights and perspectives
+- Use short paragraphs and line breaks for readability
+- Optimise for each platform's style and audience
+- Be practical and actionable, not theoretical
+- Draw from real experience - reference specific ventures or stories where relevant
+${selectedPillar ? `\nCurrent content pillar focus: ${selectedPillar.name} - ${selectedPillar.description}` : ''}`;
+}
 
 // Parse JSON bodies
 app.use(express.json({ limit: '50mb' }));
@@ -577,7 +698,7 @@ app.post('/api/publish', async (req, res) => {
 
 // Claude API proxy endpoint for content generation
 app.post('/api/generate', async (req, res) => {
-  const { apiKey, topic, pillar, platforms } = req.body;
+  const { apiKey, topic, pillar, platforms, userId = 'default' } = req.body;
 
   if (!apiKey) {
     return res.status(400).json({ error: 'Claude API key is required' });
@@ -595,63 +716,34 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'At least one platform must be selected' });
   }
 
-  const systemPrompt = `You are a social media content strategist for moonboots labs, a consultancy and venture studio ecosystem.
-
-THE MOONBOOTS LABS ECOSYSTEM:
-
-1. MOONBOOTS CONSULTANCY (Moonboots Consultancy UK Ltd)
-   Website: moonbootsconsultancy.net
-   The professional services and advisory arm delivering:
-   - AI Strategy & Integration Services (helping organisations apply AI meaningfully)
-   - Website & Agentic AI Development (building functional AI applications for client needs)
-   - Technical & Operational Enablement (deployment planning, tooling, integrations)
-   - Business Transformation & Web3 Integration (unifying tokens, memberships, governance with real business models)
-   - Web3 pilot strategy workshops for brands
-   - Tokenomics reviews and DAO launch consulting
-
-   Positioned as the "business enablement bridge" - capturing value from clients needing hands-on implementation rather than self-service.
-
-2. MOMENTS (Community Building Infrastructure)
-   White-label community platform for creators to own their audience relationships.
-   Features: memberships, badges, gated content, live-streaming, fan timelines, rewards.
-   For: musicians, artists, athletes, brands seeking platform independence.
-   Key message: Own your audience, don't rent it from social platforms.
-
-3. DEEPFABRIK (Web3 Infrastructure)
-   Modular Web3 tooling and blockchain solutions. Tokenization platforms, decentralized applications.
-
-4. MOONBOOTS DAO
-   Community investment and cultural membership vehicle.
-
-5. CHAPPYZ
-   AI analytics hub and technical integration support.
-
-Write engaging, thought-provoking content that:
-- Sounds authentic and conversational, not corporate
-- Shares genuine insights and perspectives
-- Avoids buzzwords and jargon
-- Uses short paragraphs and line breaks for readability
-- Is optimized for each platform's style and audience
-- Positions community ownership as the future (own vs rent your audience)
-- Bridges strategy to execution - practical, not theoretical
-
-The founder's voice is: thoughtful, direct, occasionally contrarian, draws from real experience with startups and enterprise clients. Skeptical of platform dependency, values substance over hype. Believes in moving from strategy → execution with real ROI.`;
-
-  const userPrompt = `Create social media posts about: "${topic}"
-Content pillar: ${pillar || 'AI Strategy'}
-
-Generate unique, platform-optimized content for: ${enabledPlatforms.join(', ')}
-
-Return ONLY valid JSON in this exact format (no markdown, no code blocks):
-{
-  "linkedin": "LinkedIn post content here (professional, can be longer, use line breaks)",
-  "x": "X/Twitter post content here (concise, punchy, under 280 chars ideal)",
-  "instagram": "Instagram caption here (engaging, include relevant hashtags)"
-}
-
-Only include the platforms requested. Make each post unique and tailored to that platform's style.`;
-
   try {
+    // Fetch dynamic context from Supabase (or use defaults)
+    const context = await getGenerationContext(userId);
+
+    // Find selected pillar details
+    const selectedPillar = pillar
+      ? context.pillars.find(p => p.name === pillar || p.id === pillar)
+      : null;
+
+    // Build dynamic system prompt from context
+    const systemPrompt = buildSystemPrompt(context, selectedPillar);
+
+    const userPrompt = `Create social media posts about: "${topic}"
+${selectedPillar ? `Content pillar: ${selectedPillar.name}` : `Content pillar: ${pillar || 'AI Strategy'}`}
+${selectedPillar?.example_angles?.length ? `Possible angles: ${selectedPillar.example_angles.join(', ')}` : ''}
+
+Generate unique, platform-optimised content for: ${enabledPlatforms.join(', ')}
+
+Platform guidelines:
+- LinkedIn: Professional but human. Can be longer (1000-1500 chars). Use line breaks between paragraphs. No hashtags or max 3 relevant ones at the end.
+- X/Twitter: Concise and punchy. Under 280 characters ideal. Can be provocative or contrarian. No hashtags unless essential.
+- Instagram: Engaging caption. More personal tone. Include 5-10 relevant hashtags at the very end, separated from main content.
+
+Return ONLY valid JSON in this exact format (no markdown, no code blocks, no explanation):
+{
+  ${enabledPlatforms.map(p => `"${p}": "Post content here"`).join(',\n  ')}
+}`;
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -661,52 +753,65 @@ Only include the platforms requested. Make each post unique and tailored to that
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
+        max_tokens: 2048,
         system: systemPrompt,
-        messages: [
-          { role: 'user', content: userPrompt }
-        ],
+        messages: [{ role: 'user', content: userPrompt }],
       }),
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      console.error('Claude API error:', data);
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Claude API error:', errorData);
       return res.status(response.status).json({
-        error: data.error?.message || 'Failed to generate content',
-        details: data
+        error: errorData.error?.message || 'Claude API request failed',
+        details: errorData
       });
     }
 
-    // Extract the text content from Claude's response
-    const textContent = data.content?.[0]?.text;
+    const data = await response.json();
+
+    // Extract text content from Claude response
+    const textContent = data.content?.find(c => c.type === 'text')?.text;
+
     if (!textContent) {
-      return res.status(500).json({ error: 'No content generated' });
+      return res.status(500).json({ error: 'No content in Claude response' });
     }
 
-    // Parse the JSON response
+    // Parse JSON from response (handle potential markdown wrapping)
+    let parsedContent;
     try {
-      const content = JSON.parse(textContent);
-      res.json({ success: true, content });
+      // Remove any markdown code blocks if present
+      const cleanedContent = textContent
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      parsedContent = JSON.parse(cleanedContent);
     } catch (parseError) {
-      console.error('Failed to parse Claude response:', textContent);
-      // Try to extract JSON from the response if it's wrapped in markdown
+      // Try to extract JSON from the response
       const jsonMatch = textContent.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
-          const content = JSON.parse(jsonMatch[0]);
-          res.json({ success: true, content });
+          parsedContent = JSON.parse(jsonMatch[0]);
         } catch {
-          res.status(500).json({ error: 'Failed to parse generated content', raw: textContent });
+          console.error('JSON parse error:', parseError, 'Raw content:', textContent);
+          return res.status(500).json({
+            error: 'Failed to parse generated content',
+            raw: textContent
+          });
         }
       } else {
-        res.status(500).json({ error: 'Failed to parse generated content', raw: textContent });
+        return res.status(500).json({
+          error: 'Failed to parse generated content',
+          raw: textContent
+        });
       }
     }
+
+    res.json({ success: true, content: parsedContent });
+
   } catch (error) {
-    console.error('Claude API failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to connect to Claude API' });
+    console.error('Generate error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate content' });
   }
 });
 
@@ -926,9 +1031,315 @@ app.post('/api/generate-image', async (req, res) => {
   }
 });
 
+// ============ CONTEXT PROFILE ENDPOINTS ============
+
+app.get('/api/context/profile', async (req, res) => {
+  const { userId = 'default' } = req.query;
+
+  if (!supabase) {
+    // Return defaults if Supabase not configured
+    return res.json(getDefaultContext().profile);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('context_profile')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    res.json(data || getDefaultContext().profile);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/context/profile', async (req, res) => {
+  const { userId = 'default', ...profileData } = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured. Add SUPABASE_URL and SUPABASE_SERVICE_KEY to environment.' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('context_profile')
+      .upsert({ user_id: userId, ...profileData }, { onConflict: 'user_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ VENTURES ENDPOINTS ============
+
+app.get('/api/context/ventures', async (req, res) => {
+  const { userId = 'default' } = req.query;
+
+  if (!supabase) {
+    return res.json(getDefaultContext().ventures);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('ventures')
+      .select('*')
+      .eq('user_id', userId)
+      .order('sort_order');
+
+    if (error) throw error;
+    res.json(data?.length ? data : getDefaultContext().ventures);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/context/ventures', async (req, res) => {
+  const { userId = 'default', ...ventureData } = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('ventures')
+      .insert({ user_id: userId, ...ventureData })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/context/ventures/:id', async (req, res) => {
+  const { id } = req.params;
+  const ventureData = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('ventures')
+      .update(ventureData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/context/ventures/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('ventures')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ CONTENT PILLARS ENDPOINTS ============
+
+app.get('/api/context/pillars', async (req, res) => {
+  const { userId = 'default' } = req.query;
+
+  if (!supabase) {
+    return res.json(getDefaultContext().pillars);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('content_pillars')
+      .select('*')
+      .eq('user_id', userId)
+      .order('sort_order');
+
+    if (error) throw error;
+    res.json(data?.length ? data : getDefaultContext().pillars);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/context/pillars', async (req, res) => {
+  const { userId = 'default', ...pillarData } = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('content_pillars')
+      .insert({ user_id: userId, ...pillarData })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/context/pillars/:id', async (req, res) => {
+  const { id } = req.params;
+  const pillarData = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('content_pillars')
+      .update(pillarData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/context/pillars/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('content_pillars')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ STORY BANK ENDPOINTS ============
+
+app.get('/api/context/stories', async (req, res) => {
+  const { userId = 'default' } = req.query;
+
+  if (!supabase) {
+    return res.json([]);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('story_bank')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/context/stories', async (req, res) => {
+  const { userId = 'default', ...storyData } = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('story_bank')
+      .insert({ user_id: userId, ...storyData })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/context/stories/:id', async (req, res) => {
+  const { id } = req.params;
+  const storyData = req.body;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('story_bank')
+      .update(storyData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/context/stories/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (!supabase) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('story_bank')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), supabase: !!supabase });
 });
 
 // SPA fallback - serve index.html for all other routes
