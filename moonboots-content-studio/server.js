@@ -325,6 +325,7 @@ app.post('/api/publish', async (req, res) => {
   // Publer uses: in_profile (LinkedIn), ig_business (Instagram), twitter (X)
   const platformMatchers = {
     linkedin: ['linkedin', 'in_profile', 'in_'],
+    facebook: ['facebook', 'fb_page', 'fb_'],
     instagram: ['instagram', 'ig_business', 'ig_'],
     x: ['twitter', 'x'],
   };
@@ -426,6 +427,7 @@ app.post('/api/publish', async (req, res) => {
     // Map platform to Publer network provider
     const platformToNetwork = {
       linkedin: 'linkedin',
+      facebook: 'facebook',
       instagram: 'instagram',
       x: 'twitter',
     };
@@ -738,6 +740,7 @@ Generate unique, platform-optimised content for: ${enabledPlatforms.join(', ')}
 Platform guidelines:
 - LinkedIn: Professional but human. Can be longer (1000-1500 chars). Use line breaks between paragraphs. No hashtags or max 3 relevant ones at the end.
 - X/Twitter: Concise and punchy. Under 280 characters ideal. Can be provocative or contrarian. No hashtags unless essential.
+- Facebook: Conversational and shareable. 100-250 characters ideal for engagement. Ask questions or share insights. Use 1-2 hashtags max.
 - Instagram: Engaging caption. More personal tone. Include 5-10 relevant hashtags at the very end, separated from main content.
 
 Return ONLY valid JSON in this exact format (no markdown, no code blocks, no explanation):

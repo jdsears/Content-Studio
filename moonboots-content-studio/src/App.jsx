@@ -26,6 +26,7 @@ const pillars = [
 
 const industryBenchmarks = {
   linkedin: { frequency: { min: 3, max: 5, unit: 'week' }, bestDays: ['Tuesday', 'Wednesday', 'Thursday'], bestHours: [8, 9, 10, 12] },
+  facebook: { frequency: { min: 3, max: 7, unit: 'week' }, bestDays: ['Wednesday', 'Thursday', 'Friday'], bestHours: [9, 11, 13, 15] },
   x: { frequency: { min: 7, max: 21, unit: 'week' }, bestDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], bestHours: [9, 12, 15, 17] },
   instagram: { frequency: { min: 3, max: 5, unit: 'week' }, bestDays: ['Monday', 'Wednesday', 'Friday', 'Sunday'], bestHours: [11, 13, 18, 20] },
 };
@@ -40,6 +41,7 @@ const Logo = () => (
 const PlatformIcon = ({ platform, className = "w-5 h-5" }) => {
   const icons = {
     linkedin: <svg className={className} viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>,
+    facebook: <svg className={className} viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>,
     x: <svg className={className} viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>,
     instagram: <svg className={className} viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>,
   };
@@ -308,14 +310,17 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
   const {
     topic = '',
     selectedPillar = 'ai',
-    platforms = { linkedin: true, x: true, instagram: false },
+    platforms = { linkedin: true, facebook: false, x: true, instagram: false },
     generatedContent = null,
     generatedImages = {},
     generatingImages = {},
     useOptimalTiming = true,
     selectedSlots = {},
+    customScheduleTimes = {},
+    scheduleMode = 'optimal',
     platformImageSettings = {
       linkedin: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+      facebook: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
       x: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
       instagram: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
     },
@@ -350,6 +355,8 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
   };
   const setUseOptimalTiming = (value) => updateState({ useOptimalTiming: value });
   const setSelectedSlots = (value) => updateState({ selectedSlots: typeof value === 'function' ? value(selectedSlots) : value });
+  const setCustomScheduleTimes = (value) => updateState({ customScheduleTimes: typeof value === 'function' ? value(customScheduleTimes) : value });
+  const setScheduleMode = (value) => updateState({ scheduleMode: value });
   const setPlatformImageSettings = (value) => updateState({ platformImageSettings: typeof value === 'function' ? value(platformImageSettings) : value });
   const setExpandedPlatformSettings = (value) => updateState({ expandedPlatformSettings: value });
 
@@ -486,7 +493,10 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
     if (generatedContent?.[platform]) {
       // Use selected slot, or first available slot if auto-schedule is on
       let scheduledTime = null;
-      if (useOptimalTiming) {
+      if (scheduleMode === 'custom' && customScheduleTimes[platform]) {
+        const dt = new Date(customScheduleTimes[platform]);
+        scheduledTime = dt.toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      } else if (scheduleMode === 'optimal' && useOptimalTiming) {
         const slot = selectedSlots[platform] || getNextTimeSlots(platform, 1)[0];
         scheduledTime = slot ? slot.full : null;
       }
@@ -509,15 +519,34 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-sm font-medium text-white">Scheduling</h4>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={useOptimalTiming} onChange={(e) => setUseOptimalTiming(e.target.checked)} className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0" />
-            <span className="text-xs text-slate-400">Auto-schedule to optimal times</span>
-          </label>
+          <div className="flex items-center gap-1 bg-slate-900/50 rounded-lg p-0.5">
+            {[
+              { id: 'now', label: 'Post Now' },
+              { id: 'optimal', label: 'Optimal' },
+              { id: 'custom', label: 'Custom' },
+            ].map(mode => (
+              <button
+                key={mode.id}
+                onClick={() => setScheduleMode(mode.id)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+                  scheduleMode === mode.id
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {useOptimalTiming && (
+        {scheduleMode === 'now' && (
+          <p className="text-xs text-slate-400">Posts will be added to the queue without a scheduled time. Publish manually when ready.</p>
+        )}
+
+        {scheduleMode === 'optimal' && (
           <div className="space-y-3">
-            {['linkedin', 'x', 'instagram'].filter(p => platforms[p]).map(platform => {
+            {['linkedin', 'facebook', 'x', 'instagram'].filter(p => platforms[p]).map(platform => {
               const slots = getNextTimeSlots(platform, 5);
               const selected = selectedSlots[platform] || slots[0];
               const benchmark = industryBenchmarks[platform];
@@ -547,6 +576,38 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
                     ))}
                   </div>
                   <p className="text-[10px] text-slate-500 mt-2">Best days: {benchmark.bestDays.join(', ')}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {scheduleMode === 'custom' && (
+          <div className="space-y-3">
+            {['linkedin', 'facebook', 'x', 'instagram'].filter(p => platforms[p]).map(platform => {
+              const minDate = new Date();
+              minDate.setMinutes(minDate.getMinutes() + 5);
+              const minDateStr = minDate.toISOString().slice(0, 16);
+              return (
+                <div key={platform} className="p-3 bg-slate-900/50 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
+                      <span className="text-sm text-white capitalize">{platform === 'x' ? 'X' : platform}</span>
+                    </div>
+                    <input
+                      type="datetime-local"
+                      min={minDateStr}
+                      value={customScheduleTimes[platform] || ''}
+                      onChange={(e) => setCustomScheduleTimes(prev => ({ ...prev, [platform]: e.target.value }))}
+                      className="px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  {customScheduleTimes[platform] && (
+                    <p className="text-[10px] text-blue-400 mt-1">
+                      Scheduled: {new Date(customScheduleTimes[platform]).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </p>
+                  )}
                 </div>
               );
             })}
@@ -609,7 +670,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       <div>
         <label className="block text-sm text-slate-400 mb-2">Generate for</label>
         <div className="space-y-3">
-          {['linkedin', 'x', 'instagram'].map(platform => {
+          {['linkedin', 'facebook', 'x', 'instagram'].map(platform => {
             const imgSettings = platformImageSettings[platform];
             const isExpanded = expandedPlatformSettings === platform;
             return (
@@ -1397,6 +1458,7 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
         <div className="space-y-3">
           {[
             { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin', 'in_profile', 'in_'] },
+            { p: 'facebook', label: 'Facebook', publerPlatforms: ['facebook', 'fb_page', 'fb_'] },
             { p: 'instagram', label: 'Instagram', publerPlatforms: ['instagram', 'ig_business', 'ig_'] },
             { p: 'x', label: 'X (Twitter)', publerPlatforms: ['twitter', 'x'], manual: true }
           ].map(({ p, label, publerPlatforms, manual }) => {
