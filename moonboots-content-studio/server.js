@@ -130,6 +130,167 @@ CONTENT GUIDELINES:
 ${selectedPillar ? `\nCurrent content pillar focus: ${selectedPillar.name} - ${selectedPillar.description}` : ''}`;
 }
 
+// ============ WORKSPACE / MULTI-TENANT SYSTEM ============
+
+// Default workspaces (used when Supabase not configured)
+const defaultWorkspaces = [
+  {
+    id: 'moonboots',
+    name: 'MoonBoots',
+    slug: 'moonboots',
+    api_key: process.env.MOONBOOTS_API_KEY || null,
+    brand_config: {
+      tagline: 'Strategy to Execution',
+      tone: 'Direct, conversational, no jargon, occasionally contrarian',
+      forbidden_topics: [],
+      posting_frequency: {
+        linkedin: { min: 3, max: 5, days: ['Tuesday', 'Wednesday', 'Thursday'], hours: [8, 9, 10, 12] },
+        facebook: { min: 3, max: 7, days: ['Wednesday', 'Thursday', 'Friday'], hours: [9, 11, 13, 15] },
+        x: { min: 7, max: 21, days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], hours: [9, 12, 15, 17] },
+        instagram: { min: 3, max: 5, days: ['Monday', 'Wednesday', 'Friday', 'Sunday'], hours: [11, 13, 18, 20] },
+      },
+    },
+    pillars: [
+      { id: 'ai', name: 'AI Strategy', description: 'Practical AI implementation without the hype', example_angles: ['AI tools that actually save time', 'When NOT to use AI', 'AI strategy vs AI theatre'] },
+      { id: 'web3', name: 'Web3', description: 'Infrastructure for trust and ownership', example_angles: ['Creator platform dependency risks', 'Building owned audiences'] },
+      { id: 'community', name: 'Community Building', description: 'Own vs rent your audience', example_angles: ['Platform independence', 'Community as product'] },
+      { id: 'transformation', name: 'Business Transformation', description: 'Bridging strategy to execution', example_angles: ['Founder lessons', 'Shipping over perfecting'] },
+      { id: 'sport', name: 'Sport & Culture', description: 'Leadership, coaching mindset, football', example_angles: ['Football coaching parallels', 'Team culture'] },
+    ],
+    publer_api_key: null, // Set per-workspace via settings
+    created_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 'touchline',
+    name: 'Touchline',
+    slug: 'touchline',
+    api_key: process.env.TOUCHLINE_API_KEY || null,
+    brand_config: {
+      tagline: 'Empowering Grassroots Football',
+      tone: 'Enthusiastic, knowledgeable, supportive, community-focused. Never corporate or salesy.',
+      forbidden_topics: ['Gambling', 'Alcohol', 'Politics', 'Professional transfer gossip'],
+      posting_frequency: {
+        linkedin: { min: 3, max: 5, days: ['Tuesday', 'Wednesday', 'Thursday'], hours: [8, 9, 10] },
+        facebook: { min: 5, max: 10, days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], hours: [8, 12, 17, 19] },
+        x: { min: 7, max: 21, days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], hours: [7, 9, 12, 17, 19] },
+        instagram: { min: 3, max: 5, days: ['Monday', 'Wednesday', 'Friday', 'Sunday'], hours: [8, 12, 18] },
+      },
+    },
+    pillars: [
+      { id: 'coaching', name: 'Coaching Tips & Drills', description: 'Practical coaching advice for grassroots football', example_angles: ['Training drill of the week', 'Session planning tips', 'Age-appropriate coaching'] },
+      { id: 'grassroots', name: 'Grassroots Football Culture', description: 'Celebrating the grassroots game', example_angles: ['Weekend matchday stories', 'Why grassroots matters', 'Volunteer appreciation'] },
+      { id: 'development', name: 'Player Development', description: 'Helping young players grow', example_angles: ['Technical skill progression', 'Mental resilience', 'Fun-first philosophy'] },
+      { id: 'community', name: 'Community & Club Stories', description: 'Stories from clubs and communities', example_angles: ['Club spotlights', 'Parent involvement', 'Inclusive football'] },
+      { id: 'product', name: 'Product Updates & Features', description: 'Touchline platform news', example_angles: ['New features', 'How coaches use Touchline', 'Roadmap previews'] },
+    ],
+    publer_api_key: null,
+    created_at: '2026-01-30T00:00:00Z',
+  },
+];
+
+// In-memory workspace store (Supabase-backed when available)
+let workspacesCache = [...defaultWorkspaces];
+
+async function getWorkspaces() {
+  if (!supabase) return workspacesCache;
+
+  try {
+    const { data, error } = await supabase
+      .from('workspaces')
+      .select('*')
+      .order('created_at');
+
+    if (error || !data?.length) return workspacesCache;
+    return data;
+  } catch {
+    return workspacesCache;
+  }
+}
+
+async function getWorkspaceById(id) {
+  const workspaces = await getWorkspaces();
+  return workspaces.find(w => w.id === id || w.slug === id);
+}
+
+async function getWorkspaceByApiKey(apiKey) {
+  if (!apiKey) return null;
+
+  // Check env-based keys first
+  for (const ws of workspacesCache) {
+    if (ws.api_key && ws.api_key === apiKey) return ws;
+  }
+
+  // Check Supabase if available
+  if (supabase) {
+    try {
+      const { data } = await supabase
+        .from('workspaces')
+        .select('*')
+        .eq('api_key', apiKey)
+        .single();
+      if (data) return data;
+    } catch {}
+  }
+
+  return null;
+}
+
+// Build workspace-specific system prompt
+function buildWorkspaceSystemPrompt(workspace, selectedPillar) {
+  const config = workspace.brand_config || {};
+  const pillars = workspace.pillars || [];
+
+  const forbiddenText = config.forbidden_topics?.length
+    ? `\n\nNEVER discuss or reference: ${config.forbidden_topics.join(', ')}`
+    : '';
+
+  const pillarDetail = selectedPillar
+    ? pillars.find(p => p.name === selectedPillar || p.id === selectedPillar)
+    : null;
+
+  if (workspace.slug === 'moonboots') {
+    // Use the existing rich context system for MoonBoots
+    return null; // signals caller to use getGenerationContext + buildSystemPrompt
+  }
+
+  return `You are writing social media content for ${workspace.name}.
+${config.tagline ? `Brand: ${workspace.name} - "${config.tagline}"` : ''}
+
+VOICE AND TONE:
+${config.tone || 'Professional and engaging.'}
+${forbiddenText}
+
+CONTENT PILLARS:
+${pillars.map((p, i) => `${i + 1}. ${p.name}: ${p.description}${p.example_angles?.length ? ` (angles: ${p.example_angles.join(', ')})` : ''}`).join('\n')}
+
+CONTENT GUIDELINES:
+- Sound authentic and on-brand
+- Share genuine insights and perspectives
+- Use short paragraphs and line breaks for readability
+- Optimise for each platform's style and audience
+- Be practical and actionable
+${pillarDetail ? `\nCurrent content pillar focus: ${pillarDetail.name} - ${pillarDetail.description}` : ''}`;
+}
+
+// API Key authentication middleware for external endpoints
+function authenticateApiKey(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing or invalid Authorization header. Use: Bearer <API_KEY>' });
+  }
+
+  const apiKey = authHeader.slice(7);
+  getWorkspaceByApiKey(apiKey).then(workspace => {
+    if (!workspace) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+    req.workspace = workspace;
+    next();
+  }).catch(err => {
+    res.status(500).json({ error: 'Authentication failed' });
+  });
+}
+
 // Parse JSON bodies
 app.use(express.json({ limit: '50mb' }));
 
@@ -701,7 +862,7 @@ app.post('/api/publish', async (req, res) => {
 
 // Claude API proxy endpoint for content generation
 app.post('/api/generate', async (req, res) => {
-  const { apiKey, topic, pillar, platforms, userId = 'default' } = req.body;
+  const { apiKey, topic, pillar, platforms, userId = 'default', workspaceId } = req.body;
 
   if (!apiKey) {
     return res.status(400).json({ error: 'Claude API key is required' });
@@ -720,16 +881,23 @@ app.post('/api/generate', async (req, res) => {
   }
 
   try {
-    // Fetch dynamic context from Supabase (or use defaults)
-    const context = await getGenerationContext(userId);
+    // Check if workspace-specific prompt should be used
+    let systemPrompt;
+    const workspace = workspaceId ? await getWorkspaceById(workspaceId) : null;
 
-    // Find selected pillar details
-    const selectedPillar = pillar
-      ? context.pillars.find(p => p.name === pillar || p.id === pillar)
-      : null;
+    if (workspace && workspace.slug !== 'moonboots') {
+      // Use workspace-specific prompt
+      systemPrompt = buildWorkspaceSystemPrompt(workspace, pillar);
+    }
 
-    // Build dynamic system prompt from context
-    const systemPrompt = buildSystemPrompt(context, selectedPillar);
+    if (!systemPrompt) {
+      // Use MoonBoots rich context system
+      const context = await getGenerationContext(userId);
+      const selectedPillar = pillar
+        ? context.pillars.find(p => p.name === pillar || p.id === pillar)
+        : null;
+      systemPrompt = buildSystemPrompt(context, selectedPillar);
+    }
 
     const userPrompt = `Create social media posts about: "${topic}"
 ${selectedPillar ? `Content pillar: ${selectedPillar.name}` : `Content pillar: ${pillar || 'AI Strategy'}`}
@@ -1586,6 +1754,449 @@ app.delete('/api/context/stories/:id', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ============ WORKSPACE MANAGEMENT ENDPOINTS (UI) ============
+
+app.get('/api/workspaces', async (req, res) => {
+  try {
+    const workspaces = await getWorkspaces();
+    // Don't expose api_keys or publer keys in list
+    res.json(workspaces.map(w => ({
+      id: w.id,
+      name: w.name,
+      slug: w.slug,
+      brand_config: w.brand_config,
+      pillars: w.pillars,
+      created_at: w.created_at,
+      has_api_key: !!w.api_key,
+      has_publer_key: !!w.publer_api_key,
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/workspaces/:id', async (req, res) => {
+  try {
+    const workspace = await getWorkspaceById(req.params.id);
+    if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+    res.json({
+      ...workspace,
+      api_key: workspace.api_key ? `...${workspace.api_key.slice(-8)}` : null,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/workspaces/:id', async (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+
+  // Update in-memory cache
+  const idx = workspacesCache.findIndex(w => w.id === id || w.slug === id);
+  if (idx !== -1) {
+    workspacesCache[idx] = { ...workspacesCache[idx], ...updates };
+  }
+
+  // Update in Supabase if available
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .upsert({ id, ...updates }, { onConflict: 'id' })
+        .select()
+        .single();
+      if (!error && data) return res.json(data);
+    } catch {}
+  }
+
+  if (idx !== -1) {
+    return res.json(workspacesCache[idx]);
+  }
+  res.status(404).json({ error: 'Workspace not found' });
+});
+
+// Generate API key for a workspace
+app.post('/api/workspaces/:id/generate-api-key', async (req, res) => {
+  const { id } = req.params;
+  const crypto = await import('crypto');
+  const newKey = `cs_${crypto.randomBytes(32).toString('hex')}`;
+
+  // Update in-memory
+  const idx = workspacesCache.findIndex(w => w.id === id || w.slug === id);
+  if (idx !== -1) {
+    workspacesCache[idx].api_key = newKey;
+  }
+
+  // Update in Supabase
+  if (supabase) {
+    try {
+      await supabase
+        .from('workspaces')
+        .upsert({ id, api_key: newKey }, { onConflict: 'id' });
+    } catch {}
+  }
+
+  res.json({ api_key: newKey });
+});
+
+// ============ EXTERNAL API v1 ENDPOINTS (for agents like Marcus) ============
+
+// Generate content via API
+app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
+  const workspace = req.workspace;
+  const {
+    topic,
+    content_pillar,
+    platforms = ['linkedin', 'x', 'instagram'],
+    schedule = 'auto',
+    include_image = false,
+    image_style = 'modern professional',
+    brand_voice,
+  } = req.body;
+
+  if (!topic) {
+    return res.status(400).json({ error: 'topic is required' });
+  }
+
+  // Need Claude API key from workspace settings or env
+  const claudeApiKey = workspace.claude_api_key || process.env.CLAUDE_API_KEY;
+  if (!claudeApiKey) {
+    return res.status(400).json({ error: 'Claude API key not configured for this workspace' });
+  }
+
+  const enabledPlatforms = Array.isArray(platforms) ? platforms : [platforms];
+
+  try {
+    // Build workspace-specific system prompt
+    let systemPrompt = buildWorkspaceSystemPrompt(workspace, content_pillar);
+
+    // For MoonBoots, use the rich context system
+    if (!systemPrompt) {
+      const context = await getGenerationContext('default');
+      const pillar = content_pillar
+        ? context.pillars.find(p => p.name === content_pillar || p.id === content_pillar)
+        : null;
+      systemPrompt = buildSystemPrompt(context, pillar);
+    }
+
+    // Override voice if provided
+    if (brand_voice) {
+      systemPrompt += `\n\nAdditional voice direction: ${brand_voice}`;
+    }
+
+    const userPrompt = `Create social media posts about: "${topic}"
+${content_pillar ? `Content pillar: ${content_pillar}` : ''}
+
+Generate unique, platform-optimised content for: ${enabledPlatforms.join(', ')}
+
+Platform guidelines:
+- LinkedIn: Professional but human. Can be longer (1000-1500 chars). Use line breaks between paragraphs. No hashtags or max 3 relevant ones at the end.
+- X/Twitter: Concise and punchy. Under 280 characters ideal. Can be provocative or contrarian. No hashtags unless essential.
+- Facebook: Conversational and shareable. 100-250 characters ideal for engagement. Ask questions or share insights. Use 1-2 hashtags max.
+- Instagram: Engaging caption. More personal tone. Include 5-10 relevant hashtags at the very end, separated from main content.
+
+Return ONLY valid JSON in this exact format (no markdown, no code blocks, no explanation):
+{
+  ${enabledPlatforms.map(p => `"${p}": "Post content here"`).join(',\n  ')}
+}`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': claudeApiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return res.status(response.status).json({ error: errorData.error?.message || 'Content generation failed' });
+    }
+
+    const data = await response.json();
+    const textContent = data.content?.find(c => c.type === 'text')?.text;
+
+    let parsedContent;
+    try {
+      const cleaned = textContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsedContent = JSON.parse(cleaned);
+    } catch {
+      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedContent = JSON.parse(jsonMatch[0]);
+      } else {
+        return res.status(500).json({ error: 'Failed to parse generated content', raw: textContent });
+      }
+    }
+
+    // Calculate scheduled times
+    const scheduledTimes = {};
+    const freq = workspace.brand_config?.posting_frequency;
+    if (schedule === 'auto' && freq) {
+      const now = new Date();
+      enabledPlatforms.forEach(p => {
+        const pFreq = freq[p === 'twitter' ? 'x' : p];
+        if (pFreq?.hours?.length && pFreq?.days?.length) {
+          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          for (let d = 0; d < 14; d++) {
+            const checkDate = new Date(now);
+            checkDate.setDate(checkDate.getDate() + d);
+            const dayName = dayNames[checkDate.getDay()];
+            if (pFreq.days.includes(dayName)) {
+              for (const hour of pFreq.hours) {
+                const slotDate = new Date(checkDate);
+                slotDate.setHours(hour, 0, 0, 0);
+                if (slotDate > now) {
+                  scheduledTimes[p] = slotDate.toISOString();
+                  break;
+                }
+              }
+              if (scheduledTimes[p]) break;
+            }
+          }
+        }
+      });
+    } else if (schedule !== 'auto' && schedule !== 'now') {
+      // Use provided datetime for all platforms
+      enabledPlatforms.forEach(p => { scheduledTimes[p] = schedule; });
+    }
+
+    // Build post records
+    const postRecords = enabledPlatforms.map(p => ({
+      id: `${Date.now()}_${p}`,
+      workspace_id: workspace.id,
+      platform: p,
+      content: parsedContent[p],
+      pillar: content_pillar || null,
+      status: 'queued',
+      scheduled_for: scheduledTimes[p] || null,
+      created_at: new Date().toISOString(),
+    }));
+
+    // Store in Supabase if available
+    if (supabase) {
+      try {
+        await supabase.from('posts').insert(postRecords);
+      } catch (e) {
+        console.error('Failed to store posts in Supabase:', e);
+      }
+    }
+
+    res.json({
+      success: true,
+      posts: postRecords.map(p => ({
+        id: p.id,
+        platform: p.platform,
+        content: p.content,
+        scheduled_for: p.scheduled_for,
+        status: p.status,
+      })),
+      content: parsedContent,
+      scheduled_times: scheduledTimes,
+    });
+  } catch (error) {
+    console.error('API generate error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Submit pre-written content via API
+app.post('/api/v1/content/submit', authenticateApiKey, async (req, res) => {
+  const workspace = req.workspace;
+  const {
+    platforms = ['linkedin'],
+    content,
+    image_url,
+    schedule = 'auto',
+    approval_required = false,
+  } = req.body;
+
+  if (!content) {
+    return res.status(400).json({ error: 'content is required (object with platform keys or string for all platforms)' });
+  }
+
+  const enabledPlatforms = Array.isArray(platforms) ? platforms : [platforms];
+
+  // Normalize content - can be string (same for all) or object per platform
+  const contentMap = typeof content === 'string'
+    ? Object.fromEntries(enabledPlatforms.map(p => [p, content]))
+    : content;
+
+  // Calculate scheduled times
+  const scheduledTimes = {};
+  const freq = workspace.brand_config?.posting_frequency;
+  if (schedule === 'auto' && freq) {
+    const now = new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    enabledPlatforms.forEach(p => {
+      const pFreq = freq[p === 'twitter' ? 'x' : p];
+      if (pFreq?.hours?.length && pFreq?.days?.length) {
+        for (let d = 0; d < 14; d++) {
+          const checkDate = new Date(now);
+          checkDate.setDate(checkDate.getDate() + d);
+          const dayName = dayNames[checkDate.getDay()];
+          if (pFreq.days.includes(dayName)) {
+            for (const hour of pFreq.hours) {
+              const slotDate = new Date(checkDate);
+              slotDate.setHours(hour, 0, 0, 0);
+              if (slotDate > now) {
+                scheduledTimes[p] = slotDate.toISOString();
+                break;
+              }
+            }
+            if (scheduledTimes[p]) break;
+          }
+        }
+      }
+    });
+  } else if (schedule !== 'auto' && schedule !== 'now') {
+    enabledPlatforms.forEach(p => { scheduledTimes[p] = schedule; });
+  }
+
+  const postRecords = enabledPlatforms.map(p => ({
+    id: `${Date.now()}_${p}`,
+    workspace_id: workspace.id,
+    platform: p,
+    content: contentMap[p] || contentMap[enabledPlatforms[0]],
+    image: image_url || null,
+    status: approval_required ? 'pending' : 'queued',
+    scheduled_for: scheduledTimes[p] || null,
+    created_at: new Date().toISOString(),
+  }));
+
+  // Store in Supabase if available
+  if (supabase) {
+    try {
+      await supabase.from('posts').insert(postRecords);
+    } catch (e) {
+      console.error('Failed to store submitted posts:', e);
+    }
+  }
+
+  res.json({
+    success: true,
+    posts: postRecords.map(p => ({
+      id: p.id,
+      platform: p.platform,
+      content: p.content,
+      status: p.status,
+      scheduled_for: p.scheduled_for,
+    })),
+  });
+});
+
+// Get queue for workspace
+app.get('/api/v1/content/queue', authenticateApiKey, async (req, res) => {
+  const workspace = req.workspace;
+  const { status, platform } = req.query;
+
+  if (supabase) {
+    try {
+      let query = supabase
+        .from('posts')
+        .select('*')
+        .eq('workspace_id', workspace.id)
+        .order('created_at', { ascending: false });
+
+      if (status) query = query.eq('status', status);
+      if (platform) query = query.eq('platform', platform);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return res.json({ posts: data || [] });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // No Supabase - return empty (UI-only posts are in localStorage)
+  res.json({ posts: [], note: 'Supabase not configured - posts are stored in browser only' });
+});
+
+// Get analytics for workspace
+app.get('/api/v1/content/analytics', authenticateApiKey, async (req, res) => {
+  const workspace = req.workspace;
+  const { period = '7d', platform = 'all' } = req.query;
+
+  if (supabase) {
+    try {
+      const days = parseInt(period) || 7;
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+
+      let query = supabase
+        .from('performance')
+        .select('*')
+        .eq('workspace_id', workspace.id)
+        .gte('posted_at', since.toISOString());
+
+      if (platform !== 'all') query = query.eq('platform', platform);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Aggregate metrics
+      const metrics = (data || []).reduce((acc, post) => ({
+        total_posts: acc.total_posts + 1,
+        total_likes: acc.total_likes + (post.likes || 0),
+        total_comments: acc.total_comments + (post.comments || 0),
+        total_shares: acc.total_shares + (post.shares || 0),
+        total_impressions: acc.total_impressions + (post.impressions || 0),
+      }), { total_posts: 0, total_likes: 0, total_comments: 0, total_shares: 0, total_impressions: 0 });
+
+      return res.json({
+        period,
+        platform,
+        workspace_id: workspace.id,
+        metrics,
+        posts: data || [],
+      });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  res.json({
+    period,
+    platform,
+    workspace_id: workspace.id,
+    metrics: { total_posts: 0, total_likes: 0, total_comments: 0, total_shares: 0, total_impressions: 0 },
+    posts: [],
+    note: 'Supabase not configured',
+  });
+});
+
+// Delete a scheduled post
+app.delete('/api/v1/content/:id', authenticateApiKey, async (req, res) => {
+  const workspace = req.workspace;
+  const { id } = req.params;
+
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .delete()
+        .eq('id', id)
+        .eq('workspace_id', workspace.id);
+
+      if (error) throw error;
+      return res.json({ success: true });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  res.json({ success: true, note: 'Supabase not configured - post may still exist in browser' });
 });
 
 // Health check endpoint

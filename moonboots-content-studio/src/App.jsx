@@ -305,7 +305,9 @@ const templateThemes = {
 };
 
 // Content Generator with optimal timing and images
-const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setGeneratorState }) => {
+const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setGeneratorState, workspace }) => {
+  // Use workspace pillars if available, otherwise global defaults
+  const activePillars = (workspace?.pillars?.length ? workspace.pillars : pillars);
   // Use lifted state from parent
   const {
     topic = '',
@@ -376,8 +378,9 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
           body: JSON.stringify({
             apiKey: settings.claudeApiKey,
             topic,
-            pillar: pillars.find(p => p.id === selectedPillar)?.name,
+            pillar: activePillars.find(p => p.id === selectedPillar)?.name,
             platforms,
+            workspaceId: workspace?.id,
           }),
         });
 
@@ -419,7 +422,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
 
     // Generate all images in parallel
     await Promise.all(enabledPlatforms.map(async (platform) => {
-      const imgSettings = platformImageSettings[platform];
+      const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
 
       try {
         let imageUrl;
@@ -458,7 +461,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
   };
 
   const handleRegenerateImage = async (platform, content) => {
-    const imgSettings = platformImageSettings[platform];
+    const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
 
     if (imgSettings.type === 'ai' && settings.replicateApiKey) {
@@ -493,18 +496,22 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
     if (generatedContent?.[platform]) {
       // Use selected slot, or first available slot if auto-schedule is on
       let scheduledTime = null;
+      let scheduledISO = null;
       if (scheduleMode === 'custom' && customScheduleTimes[platform]) {
         const dt = new Date(customScheduleTimes[platform]);
         scheduledTime = dt.toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        scheduledISO = dt.toISOString();
       } else if (scheduleMode === 'optimal' && useOptimalTiming) {
         const slot = selectedSlots[platform] || getNextTimeSlots(platform, 1)[0];
         scheduledTime = slot ? slot.full : null;
+        scheduledISO = slot ? slot.date.toISOString() : null;
       }
       onGenerate({
         content: generatedContent[platform],
         platform,
-        pillar: pillars.find(p => p.id === selectedPillar)?.name,
+        pillar: activePillars.find(p => p.id === selectedPillar)?.name,
         suggestedTime: scheduledTime,
+        scheduledFor: scheduledISO,
         image: generatedImages[platform] || null,
       });
       setGeneratedContent(prev => ({ ...prev, [platform]: null }));
@@ -631,7 +638,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     apiKey: settings.claudeApiKey,
-                    pillar: pillars.find(p => p.id === selectedPillar)?.name,
+                    pillar: activePillars.find(p => p.id === selectedPillar)?.name,
                   }),
                 });
                 const data = await response.json();
@@ -659,7 +666,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       <div>
         <label className="block text-sm text-slate-400 mb-2">Content pillar</label>
         <div className="flex flex-wrap gap-2">
-          {pillars.map(pillar => (
+          {activePillars.map(pillar => (
             <button key={pillar.id} onClick={() => setSelectedPillar(pillar.id)} className={`px-3 py-1.5 text-sm rounded-full border transition-all ${selectedPillar === pillar.id ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-slate-300 border-slate-700 hover:border-slate-500'}`}>
               {pillar.name}
             </button>
@@ -671,7 +678,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
         <label className="block text-sm text-slate-400 mb-2">Generate for</label>
         <div className="space-y-3">
           {['linkedin', 'facebook', 'x', 'instagram'].map(platform => {
-            const imgSettings = platformImageSettings[platform];
+            const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
             const isExpanded = expandedPlatformSettings === platform;
             return (
               <div key={platform} className="bg-slate-800/30 rounded-lg border border-slate-700/50">
@@ -791,7 +798,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
           <h3 className="text-sm font-medium text-slate-300">Generated Content</h3>
           {Object.entries(generatedContent).map(([platform, content]) => {
             if (!content || !platforms[platform]) return null;
-            const imgSettings = platformImageSettings[platform];
+            const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
             return (
               <div key={platform} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
                 <div className="flex items-center justify-between mb-3">
@@ -1358,7 +1365,7 @@ const QuoteCardMaker = () => {
 };
 
 // Settings Panel with localStorage persistence (auto-save)
-const SettingsPanel = ({ settings, onSettingsChange }) => {
+const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
   const [saveStatus, setSaveStatus] = useState('');
   const [testingPubler, setTestingPubler] = useState(false);
   const [publerStatus, setPublerStatus] = useState(null);
@@ -1603,37 +1610,163 @@ const SettingsPanel = ({ settings, onSettingsChange }) => {
               onChange={(e) => handleChange('defaultPillar', e.target.value)}
               className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
             >
-              {pillars.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {(workspace?.pillars?.length ? workspace.pillars : pillars).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
         </div>
       </div>
+
+      {/* Workspace API Key */}
+      {workspace && (
+        <div>
+          <h3 className="text-sm font-medium text-slate-300 mb-4">Workspace API Key</h3>
+          <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50 space-y-3">
+            <p className="text-xs text-slate-400">
+              API keys allow external agents (like Marcus, Touchline's AI CMO) to submit content programmatically to this workspace.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-xs text-slate-400 font-mono">
+                {workspace.has_api_key ? '••••••••••••••••' : 'No API key generated'}
+              </code>
+              <button
+                onClick={async () => {
+                  try {
+                    const resp = await fetch(`/api/workspaces/${workspace.id}/generate-api-key`, { method: 'POST' });
+                    const data = await resp.json();
+                    if (data.api_key) {
+                      navigator.clipboard.writeText(data.api_key);
+                      alert('New API key generated and copied to clipboard. Store it securely - it won\'t be shown again.');
+                    }
+                  } catch (e) {
+                    alert('Failed to generate API key');
+                  }
+                }}
+                className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+              >
+                {workspace.has_api_key ? 'Regenerate' : 'Generate Key'}
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              API base: <code className="text-slate-400">/api/v1/content/</code> — Endpoints: generate, submit, queue, analytics
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 // Main App
+// Workspace switcher component
+const WorkspaceSwitcher = ({ workspaces, activeWorkspace, onSwitch }) => {
+  const [open, setOpen] = useState(false);
+  const active = workspaces.find(w => w.id === activeWorkspace) || workspaces[0];
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 border border-slate-700/50 rounded-lg hover:border-slate-600 transition-colors"
+      >
+        <div className="w-6 h-6 rounded-md bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
+          {active?.name?.[0] || '?'}
+        </div>
+        <span className="text-sm text-white">{active?.name || 'Workspace'}</span>
+        <svg className="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full mt-1 z-20 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1">
+            {workspaces.map(ws => (
+              <button
+                key={ws.id}
+                onClick={() => { onSwitch(ws.id); setOpen(false); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-700/50 transition-colors ${ws.id === activeWorkspace ? 'bg-slate-700/30' : ''}`}
+              >
+                <div className="w-7 h-7 rounded-md bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white">
+                  {ws.name[0]}
+                </div>
+                <div>
+                  <p className="text-sm text-white">{ws.name}</p>
+                  <p className="text-[10px] text-slate-400">{ws.brand_config?.tagline || ws.slug}</p>
+                </div>
+                {ws.id === activeWorkspace && (
+                  <svg className="w-4 h-4 text-blue-400 ml-auto" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                )}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 export default function ContentStudio() {
   const [activeTab, setActiveTab] = useState('generate');
 
-  // Posts queue with localStorage persistence
+  // Workspace state
+  const [workspaces, setWorkspaces] = useState([]);
+  const [activeWorkspace, setActiveWorkspace] = useState(() => {
+    try { return localStorage.getItem('activeWorkspace') || 'moonboots'; } catch { return 'moonboots'; }
+  });
+
+  // Fetch workspaces on mount
+  useEffect(() => {
+    fetch('/api/workspaces')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setWorkspaces(data);
+        }
+      })
+      .catch(() => {
+        // Use fallback workspaces if API fails
+        setWorkspaces([
+          { id: 'moonboots', name: 'MoonBoots', slug: 'moonboots', brand_config: { tagline: 'Strategy to Execution' }, pillars: [] },
+          { id: 'touchline', name: 'Touchline', slug: 'touchline', brand_config: { tagline: 'Empowering Grassroots Football' }, pillars: [] },
+        ]);
+      });
+  }, []);
+
+  const handleWorkspaceSwitch = (wsId) => {
+    setActiveWorkspace(wsId);
+    try { localStorage.setItem('activeWorkspace', wsId); } catch {}
+  };
+
+  const currentWorkspace = workspaces.find(w => w.id === activeWorkspace) || workspaces[0];
+
+  // Posts queue with localStorage persistence (per workspace)
+  const postsKey = `contentStudioPosts_${activeWorkspace}`;
   const [posts, setPosts] = useState(() => {
     try {
-      const saved = localStorage.getItem('contentStudioPosts');
+      const saved = localStorage.getItem(postsKey);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
   });
 
+  // Reload posts when workspace changes
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(postsKey);
+      setPosts(saved ? JSON.parse(saved) : []);
+    } catch {
+      setPosts([]);
+    }
+  }, [activeWorkspace]);
+
   // Save posts to localStorage when they change
   useEffect(() => {
     try {
-      localStorage.setItem('contentStudioPosts', JSON.stringify(posts));
+      localStorage.setItem(postsKey, JSON.stringify(posts));
     } catch (e) {
       console.error('Failed to save posts:', e);
     }
-  }, [posts]);
+  }, [posts, postsKey]);
 
   const [performance] = useState(historicalPerformance);
 
@@ -1641,53 +1774,59 @@ export default function ContentStudio() {
   const [generatorState, setGeneratorState] = useState({
     topic: '',
     selectedPillar: 'ai',
-    platforms: { linkedin: true, x: true, instagram: false },
+    platforms: { linkedin: true, facebook: false, x: true, instagram: false },
     generatedContent: null,
     generatedImages: {},
     generatingImages: {},
     useOptimalTiming: true,
     selectedSlots: {},
+    customScheduleTimes: {},
+    scheduleMode: 'optimal',
     platformImageSettings: {
       linkedin: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
+      facebook: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
       x: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
       instagram: { enabled: true, type: 'template', template: 'quote', theme: 'midnight' },
     },
     expandedPlatformSettings: null,
   });
 
-  // Settings with localStorage persistence
+  // Settings with localStorage persistence (per workspace)
+  const settingsKey = `contentStudioSettings_${activeWorkspace}`;
+  const defaultSettings = {
+    publerApiKey: '',
+    publerWorkspaceId: '',
+    replicateApiKey: '',
+    claudeApiKey: '',
+    autoSchedule: true,
+    includeImages: true,
+    defaultTemplate: 'quote',
+    defaultPillar: 'ai',
+  };
   const [settings, setSettings] = useState(() => {
     try {
-      const saved = localStorage.getItem('contentStudioSettings');
-      return saved ? JSON.parse(saved) : {
-        publerApiKey: '',
-        publerWorkspaceId: '',
-        replicateApiKey: '',
-        claudeApiKey: '',
-        autoSchedule: true,
-        includeImages: true,
-        defaultTemplate: 'quote',
-        defaultPillar: 'ai',
-      };
+      const saved = localStorage.getItem(settingsKey);
+      return saved ? JSON.parse(saved) : defaultSettings;
     } catch {
-      return {
-        publerApiKey: '',
-        publerWorkspaceId: '',
-        replicateApiKey: '',
-        claudeApiKey: '',
-        autoSchedule: true,
-        includeImages: true,
-        defaultTemplate: 'quote',
-        defaultPillar: 'ai',
-      };
+      return defaultSettings;
     }
   });
+
+  // Reload settings when workspace changes
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(settingsKey);
+      setSettings(saved ? JSON.parse(saved) : defaultSettings);
+    } catch {
+      setSettings(defaultSettings);
+    }
+  }, [activeWorkspace]);
 
   // Save settings to localStorage when they change
   const handleSettingsChange = (newSettings) => {
     setSettings(newSettings);
     try {
-      localStorage.setItem('contentStudioSettings', JSON.stringify(newSettings));
+      localStorage.setItem(settingsKey, JSON.stringify(newSettings));
     } catch (e) {
       console.error('Failed to save settings:', e);
     }
@@ -1711,7 +1850,7 @@ export default function ContentStudio() {
       id: Date.now(),
       status: 'pending',
       createdAt: new Date().toISOString().split('T')[0],
-      scheduledFor: null
+      scheduledFor: newPost.scheduledFor || null
     }]);
     setActiveTab('queue');
   };
@@ -1811,10 +1950,21 @@ export default function ContentStudio() {
     <div className="min-h-screen bg-slate-950 text-white">
       <header className="border-b border-slate-800/50">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Logo />
           <div className="flex items-center gap-4">
-            <span className="text-xs text-slate-500">js@moonbootsconsultancy.net</span>
-            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm">JS</div>
+            <Logo />
+            {workspaces.length > 1 && (
+              <WorkspaceSwitcher
+                workspaces={workspaces}
+                activeWorkspace={activeWorkspace}
+                onSwitch={handleWorkspaceSwitch}
+              />
+            )}
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-slate-500">{currentWorkspace?.name || 'Content Studio'}</span>
+            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm">
+              {currentWorkspace?.name?.[0] || 'C'}
+            </div>
           </div>
         </div>
       </header>
@@ -1832,12 +1982,12 @@ export default function ContentStudio() {
 
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
-          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} />}
+          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} workspace={currentWorkspace} />}
           {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onUnapprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'pending', approvedAt: null, error: null } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
-          {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} />}
+          {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} workspace={currentWorkspace} />}
         </div>
       </main>
     </div>
