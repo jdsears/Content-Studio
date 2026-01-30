@@ -1462,34 +1462,72 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
 
       <div>
         <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
+        <p className="text-xs text-slate-500 mb-3">Assign a Publer account to each platform for this workspace. Test your Publer connection first to load available accounts.</p>
         <div className="space-y-3">
           {[
             { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin', 'in_profile', 'in_'] },
             { p: 'facebook', label: 'Facebook', publerPlatforms: ['facebook', 'fb_page', 'fb_'] },
             { p: 'instagram', label: 'Instagram', publerPlatforms: ['instagram', 'ig_business', 'ig_'] },
-            { p: 'x', label: 'X (Twitter)', publerPlatforms: ['twitter', 'x'], manual: true }
-          ].map(({ p, label, publerPlatforms, manual }) => {
-            const connectedAccount = publerStatus?.accountsList?.find(
+            { p: 'x', label: 'X (Twitter)', publerPlatforms: ['twitter', 'x'] }
+          ].map(({ p, label, publerPlatforms }) => {
+            const allAccounts = publerStatus?.accountsList || [];
+            // Filter to accounts matching this platform type
+            const matchingAccounts = allAccounts.filter(
               acc => publerPlatforms.some(pp => acc.platform?.toLowerCase()?.includes(pp))
             );
-            const isConnected = !!connectedAccount;
+            const selectedId = settings.platformAccounts?.[p] || '';
+            const selectedAccount = allAccounts.find(acc => acc.id === selectedId);
+            const isAssigned = !!selectedId && !!selectedAccount;
+
             return (
-              <div key={p} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-                <div className="flex items-center gap-3">
-                  <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
-                  <div>
-                    <p className="text-sm text-white">{label}</p>
-                    <p className={`text-xs ${isConnected ? 'text-green-500' : manual ? 'text-yellow-500' : 'text-slate-500'}`}>
-                      {isConnected ? `Connected: ${connectedAccount?.name}` : manual ? 'Manual posting only' : 'Click Test Connection below'}
-                    </p>
+              <div key={p} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
+                    <div>
+                      <p className="text-sm text-white">{label}</p>
+                      <p className={`text-xs ${isAssigned ? 'text-green-500' : 'text-slate-500'}`}>
+                        {isAssigned ? `Assigned: ${selectedAccount.name}` : matchingAccounts.length > 0 ? 'Select an account below' : 'No matching accounts found'}
+                      </p>
+                    </div>
                   </div>
+                  {isAssigned ? (
+                    <span className="px-3 py-1.5 text-xs bg-green-900/50 text-green-400 rounded-lg border border-green-700/50">Connected</span>
+                  ) : (
+                    <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">Not assigned</span>
+                  )}
                 </div>
-                {manual && !isConnected ? (
-                  <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">N/A</span>
-                ) : isConnected ? (
-                  <span className="px-3 py-1.5 text-xs bg-green-900/50 text-green-400 rounded-lg border border-green-700/50">Connected</span>
-                ) : (
-                  <a href="https://app.publer.com" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-xs bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600">Add in Publer</a>
+                {matchingAccounts.length > 0 && (
+                  <select
+                    value={selectedId}
+                    onChange={(e) => {
+                      const newAccounts = { ...(settings.platformAccounts || {}), [p]: e.target.value || null };
+                      if (!e.target.value) delete newAccounts[p];
+                      handleChange('platformAccounts', newAccounts);
+                    }}
+                    className="mt-3 w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
+                  >
+                    <option value="">-- Select account --</option>
+                    {matchingAccounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.platform})</option>
+                    ))}
+                  </select>
+                )}
+                {matchingAccounts.length === 0 && allAccounts.length > 0 && (
+                  <select
+                    value={selectedId}
+                    onChange={(e) => {
+                      const newAccounts = { ...(settings.platformAccounts || {}), [p]: e.target.value || null };
+                      if (!e.target.value) delete newAccounts[p];
+                      handleChange('platformAccounts', newAccounts);
+                    }}
+                    className="mt-3 w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
+                  >
+                    <option value="">-- Select any account --</option>
+                    {allAccounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.platform})</option>
+                    ))}
+                  </select>
                 )}
               </div>
             );
@@ -1802,6 +1840,7 @@ export default function ContentStudio() {
     includeImages: true,
     defaultTemplate: 'quote',
     defaultPillar: 'ai',
+    platformAccounts: {},  // { linkedin: 'publer_account_id', facebook: '...', ... }
   };
   const [settings, setSettings] = useState(() => {
     try {
@@ -1879,6 +1918,7 @@ export default function ContentStudio() {
             image: post.image,
             scheduledFor: post.scheduledFor || post.suggestedTime,
           },
+          socialAccountId: settings.platformAccounts?.[post.platform] || null,
         }),
       });
 
