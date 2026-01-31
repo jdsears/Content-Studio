@@ -1795,6 +1795,15 @@ export default function ContentStudio() {
   const handleWorkspaceSwitch = (wsId) => {
     setActiveWorkspace(wsId);
     try { localStorage.setItem('activeWorkspace', wsId); } catch {}
+    // Reset generator state for new workspace (pillar IDs differ between workspaces)
+    const ws = workspaces.find(w => w.id === wsId);
+    const firstPillar = ws?.pillars?.[0]?.id || 'ai';
+    setGeneratorState(prev => ({
+      ...prev,
+      selectedPillar: firstPillar,
+      generatedContent: null,
+      generatedImages: {},
+    }));
   };
 
   const currentWorkspace = workspaces.find(w => w.id === activeWorkspace) || workspaces[0];
