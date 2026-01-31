@@ -2199,6 +2199,486 @@ app.delete('/api/v1/content/:id', authenticateApiKey, async (req, res) => {
   res.json({ success: true, note: 'Supabase not configured - post may still exist in browser' });
 });
 
+// ============ MARCUS (CMO) POST STORE ============
+
+// In-memory post store (Supabase-backed when available)
+const postsStore = [];
+
+function generatePostId() {
+  return 'post_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+async function savePost(post) {
+  postsStore.push(post);
+
+  if (supabase) {
+    try {
+      await supabase.from('posts').insert(post);
+    } catch (e) {
+      console.error('Failed to save post to Supabase:', e);
+    }
+  }
+
+  return post;
+}
+
+async function getPosts(filter = {}) {
+  if (supabase) {
+    try {
+      let query = supabase.from('posts').select('*').order('created_at', { ascending: false });
+      if (filter.status) query = query.eq('status', filter.status);
+      if (filter.workspace_id) query = query.eq('workspace_id', filter.workspace_id);
+      if (filter.source) query = query.eq('source', filter.source);
+      if (filter.limit) query = query.limit(filter.limit);
+      const { data } = await query;
+      if (data?.length) return data;
+    } catch {}
+  }
+
+  // Fall back to in-memory
+  let results = [...postsStore];
+  if (filter.workspace_id) results = results.filter(p => p.workspace_id === filter.workspace_id);
+  if (filter.status) results = results.filter(p => p.status === filter.status);
+  if (filter.source) results = results.filter(p => p.source === filter.source);
+  results.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  if (filter.limit) results = results.slice(0, filter.limit);
+  return results;
+}
+
+async function updatePost(id, updates) {
+  const idx = postsStore.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    postsStore[idx] = { ...postsStore[idx], ...updates };
+  }
+
+  if (supabase) {
+    try {
+      await supabase.from('posts').update(updates).eq('id', id);
+    } catch {}
+  }
+}
+
+// Helper: publish a post to Publer using workspace settings
+async function publishToPubler(post, workspace) {
+  const publerApiKey = workspace.publer_api_key;
+  if (!publerApiKey) {
+    throw new Error(`No Publer API key configured for workspace "${workspace.name}". Set it in Settings.`);
+  }
+
+  const platformAccounts = workspace.platform_accounts || {};
+  const socialAccountId = platformAccounts[post.platform];
+
+  // Get Publer workspace ID
+  const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
+    headers: { 'Authorization': `Bearer-API ${publerApiKey}`, 'Content-Type': 'application/json' },
+  });
+  const wsText = await wsResponse.text();
+  if (wsText.trim().startsWith('<') || !wsResponse.ok) {
+    throw new Error('Invalid Publer API key');
+  }
+  const workspaces = JSON.parse(wsText);
+  if (!workspaces?.length) throw new Error('No Publer workspaces found');
+  const publerWorkspaceId = workspaces[0].id;
+
+  // Resolve account ID
+  let accountId = socialAccountId;
+  if (!accountId) {
+    // Auto-match by platform
+    const platformMatchers = {
+      linkedin: ['linkedin', 'in_profile', 'in_page', 'in_'],
+      facebook: ['facebook', 'fb_page', 'fb_'],
+      instagram: ['instagram', 'ig_business', 'ig_'],
+      x: ['twitter', 'x'],
+    };
+    const matchers = platformMatchers[post.platform] || [post.platform];
+
+    const accountsResp = await fetch('https://app.publer.com/api/v1/accounts', {
+      headers: {
+        'Authorization': `Bearer-API ${publerApiKey}`,
+        'Publer-Workspace-Id': publerWorkspaceId,
+        'Content-Type': 'application/json',
+      },
+    });
+    const accounts = await accountsResp.json();
+    const match = accounts.find(acc => {
+      const p = (acc.platform || acc.social_network || acc.type || '').toLowerCase();
+      return matchers.some(m => p.includes(m.toLowerCase()));
+    });
+    if (!match) throw new Error(`No ${post.platform} account found in Publer`);
+    accountId = match.id;
+  }
+
+  // Map platform to Publer network
+  const platformToNetwork = { linkedin: 'linkedin', facebook: 'facebook', instagram: 'instagram', x: 'twitter' };
+  const networkProvider = platformToNetwork[post.platform] || post.platform;
+
+  // Handle image upload if present
+  let mediaId = null;
+  if (post.image) {
+    if (post.image.startsWith('data:')) {
+      const base64Data = post.image.split(',')[1];
+      const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
+      const ext = mimeType.split('/')[1] || 'png';
+      const buffer = Buffer.from(base64Data, 'base64');
+      const boundary = '----FormBoundary' + Math.random().toString(36).slice(2);
+      const bodyStart = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="image.${ext}"\r\nContent-Type: ${mimeType}\r\n\r\n`);
+      const bodyEnd = Buffer.from(`\r\n--${boundary}--\r\n`);
+      const body = Buffer.concat([bodyStart, buffer, bodyEnd]);
+
+      const uploadResp = await fetch('https://app.publer.com/api/v1/media', {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Authorization': `Bearer-API ${publerApiKey}`,
+          'Publer-Workspace-Id': publerWorkspaceId,
+        },
+        body,
+      });
+      const uploadText = await uploadResp.text();
+      if (!uploadText.trim().startsWith('<')) {
+        const uploadData = JSON.parse(uploadText);
+        if (uploadResp.ok && uploadData.id) mediaId = uploadData.id;
+      }
+    } else {
+      // URL image
+      try {
+        const uploadResp = await fetch('https://app.publer.com/api/v1/media/from-url', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer-API ${publerApiKey}`,
+            'Publer-Workspace-Id': publerWorkspaceId,
+          },
+          body: JSON.stringify({ url: post.image }),
+        });
+        const uploadText = await uploadResp.text();
+        if (!uploadText.trim().startsWith('<')) {
+          const uploadData = JSON.parse(uploadText);
+          if (uploadResp.ok && uploadData.id) mediaId = uploadData.id;
+        }
+      } catch (e) {
+        console.error('Media URL upload failed:', e);
+      }
+    }
+  }
+
+  // Build payload
+  const networkContent = { type: mediaId ? 'photo' : 'status', text: post.content };
+  if (mediaId) networkContent.media = [{ id: mediaId, type: 'photo' }];
+
+  const accountEntry = { id: accountId };
+  if (post.scheduledFor) {
+    accountEntry.scheduled_at = new Date(post.scheduledFor).toISOString();
+  } else {
+    accountEntry.scheduled_at = new Date(Date.now() + 60 * 1000).toISOString();
+  }
+
+  const payload = {
+    bulk: {
+      state: 'scheduled',
+      posts: [{ networks: { [networkProvider]: networkContent }, accounts: [accountEntry] }],
+    },
+  };
+
+  console.log(`[Marcus] Publishing to ${post.platform} via Publer, account: ${accountId}`);
+  const response = await fetch('https://app.publer.com/api/v1/posts/schedule', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer-API ${publerApiKey}`,
+      'Publer-Workspace-Id': publerWorkspaceId,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const respText = await response.text();
+  if (respText.trim().startsWith('<')) throw new Error('Publer returned error page');
+  const data = JSON.parse(respText);
+  if (!response.ok) throw new Error(data.message || data.error || 'Publer publish failed');
+
+  // Poll job status
+  const jobId = data.job_id;
+  if (jobId) {
+    let attempts = 0;
+    while (attempts < 15) {
+      await new Promise(r => setTimeout(r, 2000));
+      attempts++;
+      try {
+        const statusResp = await fetch(`https://app.publer.com/api/v1/job_status/${jobId}`, {
+          headers: { 'Authorization': `Bearer-API ${publerApiKey}`, 'Publer-Workspace-Id': publerWorkspaceId },
+        });
+        const statusText = await statusResp.text();
+        if (!statusText.trim().startsWith('<')) {
+          const result = JSON.parse(statusText);
+          if (result.status === 'complete' || result.status === 'done' || result.done === true ||
+              (result.payload && (result.payload.posts || result.payload.errors))) {
+            if (result.status === 'failed' || result.payload?.errors?.length) {
+              throw new Error(result.payload?.errors?.[0]?.message || 'Publer job failed');
+            }
+            return { success: true, jobId, publerData: result };
+          }
+        }
+      } catch (e) {
+        if (e.message.includes('failed')) throw e;
+      }
+    }
+  }
+
+  return { success: true, jobId, publerData: data };
+}
+
+// Sync workspace Publer settings from frontend
+app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
+  const { id } = req.params;
+  const { publerApiKey, platformAccounts } = req.body;
+
+  const idx = workspacesCache.findIndex(w => w.id === id || w.slug === id);
+  if (idx === -1) return res.status(404).json({ error: 'Workspace not found' });
+
+  if (publerApiKey !== undefined) workspacesCache[idx].publer_api_key = publerApiKey;
+  if (platformAccounts !== undefined) workspacesCache[idx].platform_accounts = platformAccounts;
+
+  if (supabase) {
+    try {
+      await supabase.from('workspaces').upsert({
+        id,
+        publer_api_key: workspacesCache[idx].publer_api_key,
+        platform_accounts: workspacesCache[idx].platform_accounts,
+      }, { onConflict: 'id' });
+    } catch {}
+  }
+
+  res.json({ success: true });
+});
+
+// ============ MARCUS CMO ENDPOINTS (POST /api/posts, GET /api/posts) ============
+
+// Optional auth - if Authorization header present, validate it; if not, use source to determine workspace
+function optionalApiKeyAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const apiKey = authHeader.slice(7);
+    getWorkspaceByApiKey(apiKey).then(workspace => {
+      if (!workspace) return res.status(401).json({ error: 'Invalid API key' });
+      req.workspace = workspace;
+      next();
+    }).catch(() => res.status(500).json({ error: 'Auth failed' }));
+  } else {
+    // No auth - determine workspace from source field
+    req.workspace = null;
+    next();
+  }
+}
+
+// POST /api/posts - Marcus submits a post for publishing
+app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
+  const {
+    platform,
+    content,
+    pillar,
+    generateImage = false,
+    imageStyle,
+    scheduleFor,
+    source = 'unknown',
+  } = req.body;
+
+  if (!platform || !content) {
+    return res.status(400).json({ error: 'platform and content are required' });
+  }
+
+  // Determine workspace
+  let workspace = req.workspace;
+  if (!workspace) {
+    // Infer from source
+    if (source === 'marcus-cmo') {
+      workspace = await getWorkspaceById('touchline');
+    } else {
+      workspace = await getWorkspaceById('moonboots');
+    }
+  }
+
+  if (!workspace) {
+    return res.status(400).json({ error: 'Could not determine workspace' });
+  }
+
+  const postId = generatePostId();
+  const post = {
+    id: postId,
+    workspace_id: workspace.id,
+    platform,
+    content,
+    pillar: pillar || null,
+    image: null,
+    status: 'queued',
+    source,
+    scheduled_for: scheduleFor || null,
+    publer_job_id: null,
+    published_at: null,
+    metrics: null,
+    created_at: new Date().toISOString(),
+  };
+
+  await savePost(post);
+  console.log(`[Marcus] Post ${postId} created for ${workspace.name} on ${platform}`);
+
+  // Generate image if requested (async, don't block response)
+  if (generateImage) {
+    const claudeApiKey = workspace.claude_api_key || process.env.CLAUDE_API_KEY;
+    const replicateApiKey = workspace.replicate_api_key || process.env.REPLICATE_API_KEY;
+
+    if (claudeApiKey && replicateApiKey) {
+      // Run image generation in background
+      (async () => {
+        try {
+          console.log(`[Marcus] Generating image for post ${postId}...`);
+
+          // Step 1: Generate prompt via Claude
+          const promptResp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': claudeApiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 500,
+              system: `You create image generation prompts for social media. Style: ${imageStyle || 'modern professional'}. Output ONLY the prompt.`,
+              messages: [{ role: 'user', content: `Create an image prompt for this ${platform} post:\n\n"${content}"` }],
+            }),
+          });
+          const promptData = await promptResp.json();
+          const imagePrompt = promptData.content?.[0]?.text?.trim();
+
+          if (!imagePrompt) {
+            console.error(`[Marcus] No image prompt generated for ${postId}`);
+            return;
+          }
+
+          // Step 2: Generate image via Replicate
+          const aspectRatio = platform === 'instagram' ? '4:5' : '16:9';
+          const startResp = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${replicateApiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: { prompt: imagePrompt, aspect_ratio: aspectRatio, output_format: 'webp', output_quality: 90 } }),
+          });
+          let prediction = await startResp.json();
+
+          // Poll for completion
+          let attempts = 0;
+          while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && attempts < 60) {
+            await new Promise(r => setTimeout(r, 1000));
+            const pollResp = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
+              headers: { 'Authorization': `Bearer ${replicateApiKey}` },
+            });
+            prediction = await pollResp.json();
+            attempts++;
+          }
+
+          if (prediction.status === 'succeeded') {
+            const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+            await updatePost(postId, { image: imageUrl });
+            console.log(`[Marcus] Image generated for post ${postId}`);
+          }
+        } catch (e) {
+          console.error(`[Marcus] Image generation failed for ${postId}:`, e.message);
+        }
+      })();
+    }
+  }
+
+  // If scheduleFor is set, queue for later; otherwise try to publish now
+  if (scheduleFor) {
+    await updatePost(postId, { status: 'scheduled', scheduled_for: scheduleFor });
+    return res.json({
+      id: postId,
+      status: 'scheduled',
+      platform,
+      publishedAt: null,
+    });
+  }
+
+  // Attempt immediate publish
+  try {
+    // Wait a moment for image generation if requested (max 30s)
+    if (generateImage) {
+      let waited = 0;
+      while (waited < 30000) {
+        await new Promise(r => setTimeout(r, 2000));
+        waited += 2000;
+        const current = postsStore.find(p => p.id === postId);
+        if (current?.image) break;
+      }
+    }
+
+    const currentPost = postsStore.find(p => p.id === postId) || post;
+    const result = await publishToPubler(currentPost, workspace);
+
+    await updatePost(postId, {
+      status: 'published',
+      published_at: new Date().toISOString(),
+      publer_job_id: result.jobId || null,
+    });
+
+    return res.json({
+      id: postId,
+      status: 'published',
+      platform,
+      publishedAt: new Date().toISOString(),
+    });
+  } catch (pubError) {
+    console.error(`[Marcus] Publish failed for ${postId}:`, pubError.message);
+    await updatePost(postId, { status: 'failed', error: pubError.message });
+    return res.json({
+      id: postId,
+      status: 'queued',
+      platform,
+      publishedAt: null,
+      error: pubError.message,
+    });
+  }
+});
+
+// GET /api/posts - Marcus polls for published posts and metrics
+app.get('/api/posts', optionalApiKeyAuth, async (req, res) => {
+  const { status, limit = 50, source, platform } = req.query;
+
+  // Determine workspace
+  let workspace = req.workspace;
+  if (!workspace && source === 'marcus-cmo') {
+    workspace = await getWorkspaceById('touchline');
+  }
+
+  const filter = {
+    workspace_id: workspace?.id,
+    status: status || undefined,
+    source: source || undefined,
+    limit: parseInt(limit) || 50,
+  };
+
+  const posts = await getPosts(filter);
+
+  // Filter by platform if specified
+  const filtered = platform ? posts.filter(p => p.platform === platform) : posts;
+
+  res.json({
+    posts: filtered.map(p => ({
+      id: p.id,
+      platform: p.platform,
+      content: p.content,
+      pillar: p.pillar,
+      status: p.status,
+      source: p.source,
+      publishedAt: p.published_at || null,
+      scheduledFor: p.scheduled_for || null,
+      image: p.image || null,
+      metrics: p.metrics || { likes: 0, comments: 0, shares: 0 },
+      error: p.error || null,
+      createdAt: p.created_at,
+    })),
+  });
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), supabase: !!supabase });

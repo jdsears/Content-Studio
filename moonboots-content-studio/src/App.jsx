@@ -1401,6 +1401,18 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
     onSettingsChange(newSettings);
     setSaveStatus('saved');
     setTimeout(() => setSaveStatus(''), 2000);
+
+    // Sync Publer settings to server for workspace (so Marcus/agents can use them)
+    if ((key === 'publerApiKey' || key === 'platformAccounts') && workspace?.id) {
+      fetch(`/api/workspaces/${workspace.id}/publer-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          publerApiKey: key === 'publerApiKey' ? value : settings.publerApiKey,
+          platformAccounts: key === 'platformAccounts' ? value : settings.platformAccounts,
+        }),
+      }).catch(() => {}); // Fire and forget
+    }
   };
 
   const testPublerConnection = async () => {
@@ -1430,6 +1442,17 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
           status: newStatus,
           timestamp: Date.now()
         }));
+        // Sync Publer API key to server workspace
+        if (workspace?.id) {
+          fetch(`/api/workspaces/${workspace.id}/publer-settings`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              publerApiKey: settings.publerApiKey,
+              platformAccounts: settings.platformAccounts || {},
+            }),
+          }).catch(() => {});
+        }
       } else {
         setPublerStatus({ success: false, message: data.error || 'Connection failed' });
         // Clear cached status on failure
