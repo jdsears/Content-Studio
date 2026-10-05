@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { checkContent } from '../shared/brand.js';
 
 // All app API calls go through here. If the login has expired the app returns to the login screen.
 const apiFetch = async (url, options = {}) => {
@@ -72,6 +73,10 @@ const StatusBadge = ({ status }) => {
     publishing: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
     published: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
     rejected: 'bg-red-500/20 text-red-400 border-red-500/30',
+    queued: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+    scheduled: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+    failed: 'bg-red-500/20 text-red-400 border-red-500/30',
+    cancelled: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
   };
   return <span className={`px-2 py-1 text-xs rounded-full border ${styles[status] || styles.pending}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span>;
 };
@@ -725,6 +730,8 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                   <button onClick={() => handleAddToQueue(platform)} className="px-3 py-1 text-xs bg-white text-slate-900 rounded hover:bg-slate-100">Add to Queue</button>
                 </div>
 
+                <BrandWarnings warnings={checkContent(workspace?.slug, content)} />
+
                 <div className="flex gap-4">
                   <p className="text-sm text-slate-300 whitespace-pre-wrap flex-1">{content}</p>
 
@@ -1010,8 +1017,137 @@ const InsightsDashboard = ({ performance }) => {
   );
 };
 
+// Dates and times in UK time, e.g. "Tue 6 Oct, 08:00"
+const formatWhen = (iso) => {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+const sourceLabel = (post) => {
+  if (post.source === 'marcus-cmo') return 'From Marcus · approved in Touchline HQ';
+  if (post.source) return `From ${post.source}`;
+  return 'From the API';
+};
+
+// Warnings from the brand checks. They never change the post.
+const BrandWarnings = ({ warnings }) => {
+  if (!warnings?.length) return null;
+  return (
+    <div className="mb-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 space-y-1">
+      {warnings.map(w => <p key={w.id} className="text-xs text-yellow-300">{w.message}</p>)}
+    </div>
+  );
+};
+
+// Posts from Touchline HQ and the API, which live on the server
+const ServerPostsPanel = ({ posts, loading, error, onAction }) => {
+  const [busy, setBusy] = useState(null);
+  const [expandedImage, setExpandedImage] = useState(null);
+
+  const needsApproval = posts.filter(p => p.status === 'pending' || (p.status === 'queued' && !p.autoSchedule));
+  const upcoming = posts.filter(p => p.status === 'scheduled' || (p.status === 'queued' && p.autoSchedule))
+    .sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor));
+  const problems = posts.filter(p => p.status === 'failed');
+  const published = posts.filter(p => p.status === 'published')
+    .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0)).slice(0, 10);
+
+  if (loading && posts.length === 0) return <p className="text-sm text-slate-500">Loading posts from Touchline HQ...</p>;
+  if (posts.length === 0 && !error) return null;
+
+  const run = async (post, action) => {
+    if (action === 'cancel' && !window.confirm('Cancel this post? It will be removed from Publer and will not go out.')) return;
+    setBusy(`${post.id}:${action}`);
+    try {
+      await onAction(post, action);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const Card = ({ post }) => (
+    <div className={`p-5 bg-slate-800/50 rounded-xl border ${post.status === 'failed' ? 'border-red-900/40' : 'border-slate-700/50'}`}>
+      <div className="flex items-start justify-between mb-3 gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <PlatformIcon platform={post.platform} className="w-5 h-5 text-slate-400" />
+          {post.pillar && <span className="text-xs px-2 py-1 bg-slate-700/50 rounded-full text-slate-300">{post.pillar}</span>}
+          <span className="text-xs px-2 py-1 bg-emerald-500/10 text-emerald-300 rounded-full border border-emerald-500/30">{sourceLabel(post)}</span>
+        </div>
+        <StatusBadge status={post.status} />
+      </div>
+
+      <BrandWarnings warnings={post.warnings} />
+
+      <div className="flex gap-4 mb-3">
+        <p className="text-slate-200 text-sm whitespace-pre-wrap flex-1">{post.content}</p>
+        {post.image && (
+          <img src={post.image} alt="Post card" onClick={() => setExpandedImage(post.image)} className="w-24 h-24 object-cover rounded-lg cursor-pointer flex-shrink-0" />
+        )}
+      </div>
+
+      {post.status === 'scheduled' && <p className="text-xs text-blue-400 mb-2">Scheduled in Publer for {formatWhen(post.scheduledFor)}</p>}
+      {post.status === 'queued' && post.autoSchedule && <p className="text-xs text-yellow-400 mb-2">Waiting to reach Publer, for {formatWhen(post.scheduledFor)}. Retrying every few minutes.</p>}
+      {post.status === 'published' && (
+        <p className="text-xs text-green-400 mb-2">
+          Live since {formatWhen(post.publishedAt)}
+          {post.postUrl && <> {'·'} <a href={post.postUrl} target="_blank" rel="noreferrer" className="underline">View post</a></>}
+        </p>
+      )}
+      {post.error && <p className="text-xs text-red-400 mb-2">Problem: {post.error}</p>}
+      {post.imageError && <p className="text-xs text-slate-500 mb-2">Image card could not be made: {post.imageError}</p>}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {(post.status === 'pending' || (post.status === 'queued' && !post.autoSchedule)) && (
+          <button disabled={!!busy} onClick={() => run(post, 'approve')} className="px-4 py-2 text-sm bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 disabled:opacity-50">
+            {busy === `${post.id}:approve` ? 'Scheduling...' : 'Approve & schedule'}
+          </button>
+        )}
+        {(post.status === 'failed' || (post.status === 'queued' && post.autoSchedule)) && (
+          <button disabled={!!busy} onClick={() => run(post, 'retry')} className="px-4 py-2 text-sm bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 disabled:opacity-50">
+            {busy === `${post.id}:retry` ? 'Trying...' : 'Try again now'}
+          </button>
+        )}
+        {['pending', 'queued', 'scheduled'].includes(post.status) && (
+          <button disabled={!!busy} onClick={() => run(post, 'cancel')} className="px-4 py-2 text-sm bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 disabled:opacity-50">
+            {busy === `${post.id}:cancel` ? 'Cancelling...' : 'Cancel'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const Section = ({ title, dot, items, note }) => (items.length === 0 ? null : (
+    <div>
+      <h3 className="text-sm font-medium text-slate-300 mb-1 flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${dot}`}></span>
+        {title}
+        <span className="text-xs text-slate-500">({items.length})</span>
+      </h3>
+      {note && <p className="text-xs text-slate-500 mb-3">{note}</p>}
+      <div className="space-y-4 mt-3">{items.map(post => <Card key={post.id} post={post} />)}</div>
+    </div>
+  ));
+
+  return (
+    <div className="space-y-8">
+      {error && <p className="text-sm text-red-400">Could not load posts from Touchline HQ: {error}</p>}
+      <Section title="Needs a problem fixed" dot="bg-red-500" items={problems} />
+      <Section title="Waiting for your approval" dot="bg-yellow-500" items={needsApproval} note="Sent through the API. Approve to schedule them in Publer." />
+      <Section title="Coming up from Touchline HQ" dot="bg-blue-500" items={upcoming} note="Already approved in Touchline HQ. They go out by themselves; cancel any you don't want." />
+      <Section title="Recently published" dot="bg-green-500" items={published} />
+
+      {expandedImage && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-8" onClick={() => setExpandedImage(null)}>
+          <img src={expandedImage} alt="Expanded" className="max-w-full max-h-[90vh] rounded-lg" />
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Approval Queue with images
-const ApprovalQueue = ({ posts, onApprove, onReject, onUnapprove, onRemoveImage, onCopy, onEdit, onDelete }) => {
+const ApprovalQueue = ({ posts, workspaceSlug, onApprove, onReject, onUnapprove, onRemoveImage, onCopy, onEdit, onDelete }) => {
   const pending = posts.filter(p => p.status === 'pending');
   const approved = posts.filter(p => p.status === 'approved' || p.status === 'publishing' || p.status === 'published');
   const rejected = posts.filter(p => p.status === 'rejected');
@@ -1047,6 +1183,8 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onUnapprove, onRemoveImage,
         </div>
         <StatusBadge status={post.status} />
       </div>
+
+      <BrandWarnings warnings={checkContent(workspaceSlug, post.content)} />
 
       <div className="flex gap-4 mb-4">
         <p className="text-slate-200 text-sm whitespace-pre-wrap flex-1">{post.content}</p>
@@ -1206,29 +1344,70 @@ const ApprovalQueue = ({ posts, onApprove, onReject, onUnapprove, onRemoveImage,
   );
 };
 
-// Calendar View
-const CalendarView = ({ posts }) => {
-  const scheduled = posts.filter(p => p.scheduledFor && p.status === 'approved');
+// Calendar: a real month, with posts from this browser's Queue and from Touchline HQ
+const CalendarView = ({ posts, serverPosts = [] }) => {
+  const [monthOffset, setMonthOffset] = useState(0);
+
+  const ukDay = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }); // YYYY-MM-DD
+
+  const items = [
+    ...posts
+      .filter(p => ['approved', 'publishing', 'published'].includes(p.status) && (p.scheduledFor || p.publishedAt))
+      .map(p => ({ id: `local-${p.id}`, platform: p.platform, content: p.content, image: p.image, when: p.scheduledFor || p.publishedAt, status: p.status, fromHq: false })),
+    ...serverPosts
+      .filter(p => ['queued', 'scheduled', 'published'].includes(p.status) && (p.publishedAt || p.scheduledFor))
+      .map(p => ({ id: `server-${p.id}`, platform: p.platform, content: p.content, image: p.image, when: p.publishedAt || p.scheduledFor, status: p.status, fromHq: p.source === 'marcus-cmo' })),
+  ].filter(item => !Number.isNaN(new Date(item.when).getTime()));
+
+  const today = new Date();
+  const first = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const leadingBlanks = (first.getDay() + 6) % 7; // weeks start on Monday
+  const monthKey = (d) => `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const byDay = items.reduce((acc, item) => {
+    const key = ukDay(item.when);
+    (acc[key] = acc[key] || []).push(item);
+    return acc;
+  }, {});
+  const todayKey = ukDay(today.toISOString());
+  const monthItems = items
+    .filter(item => ukDay(item.when).startsWith(monthKey(1).slice(0, 7)))
+    .sort((a, b) => new Date(a.when) - new Date(b.when));
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <button onClick={() => setMonthOffset(m => m - 1)} className="px-3 py-1 text-sm text-slate-400 hover:text-white">Previous</button>
+        <h3 className="text-sm font-medium text-white">{first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h3>
+        <button onClick={() => setMonthOffset(m => m + 1)} className="px-3 py-1 text-sm text-slate-400 hover:text-white">Next</button>
+      </div>
       <div className="grid grid-cols-7 gap-2 text-center text-xs text-slate-500 mb-2">
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => <div key={d}>{d}</div>)}
       </div>
       <div className="grid grid-cols-7 gap-2">
-        {Array.from({ length: 28 }, (_, i) => {
+        {Array.from({ length: leadingBlanks }, (_, i) => <div key={`blank-${i}`} />)}
+        {Array.from({ length: daysInMonth }, (_, i) => {
           const day = i + 1;
-          const hasPost = scheduled.some(p => parseInt(p.scheduledFor?.split(' ')[0]?.split('-')[2]) === day);
-          return <div key={i} className={`aspect-square rounded-lg flex items-center justify-center text-sm ${hasPost ? 'bg-white text-slate-900 font-medium' : 'bg-slate-800/50 text-slate-400'}`}>{day}</div>;
+          const dayItems = byDay[monthKey(day)] || [];
+          const isToday = monthKey(day) === todayKey;
+          return (
+            <div key={day} className={`aspect-square rounded-lg flex flex-col items-center justify-center text-sm ${dayItems.length ? 'bg-white text-slate-900 font-medium' : 'bg-slate-800/50 text-slate-400'} ${isToday ? 'ring-2 ring-blue-500' : ''}`}>
+              {day}
+              {dayItems.length > 0 && <span className="text-[10px] text-slate-500">{dayItems.length} post{dayItems.length > 1 ? 's' : ''}</span>}
+            </div>
+          );
         })}
       </div>
       <div className="pt-4 border-t border-slate-800">
-        <h3 className="text-sm font-medium text-slate-300 mb-3">Scheduled</h3>
-        {scheduled.length === 0 ? <p className="text-sm text-slate-500">No posts scheduled</p> : scheduled.map(post => (
-          <div key={post.id} className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg mb-2">
-            <PlatformIcon platform={post.platform} className="w-4 h-4 text-slate-400" />
-            <p className="text-sm text-slate-300 truncate flex-1">{post.content.substring(0, 50)}...</p>
-            {post.image && <div className="w-8 h-8 rounded overflow-hidden flex-shrink-0"><img src={post.image} alt="" className="w-full h-full object-cover" /></div>}
-            <span className="text-xs text-slate-500">{post.scheduledFor}</span>
+        <h3 className="text-sm font-medium text-slate-300 mb-3">This month</h3>
+        {monthItems.length === 0 ? <p className="text-sm text-slate-500">No posts this month</p> : monthItems.map(item => (
+          <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg mb-2">
+            <PlatformIcon platform={item.platform} className="w-4 h-4 text-slate-400" />
+            <p className="text-sm text-slate-300 truncate flex-1">{item.content.substring(0, 60)}{item.content.length > 60 ? '...' : ''}</p>
+            {item.fromHq && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300">Marcus</span>}
+            {item.image && <div className="w-8 h-8 rounded overflow-hidden flex-shrink-0"><img src={item.image} alt="" className="w-full h-full object-cover" /></div>}
+            <span className="text-xs text-slate-500 whitespace-nowrap">{formatWhen(item.when)}</span>
+            <StatusBadge status={item.status} />
           </div>
         ))}
       </div>
@@ -1837,6 +2016,53 @@ function StudioApp({ onLogout }) {
 
   const currentWorkspace = workspaces.find(w => w.id === activeWorkspace) || workspaces[0];
 
+  // Posts from Touchline HQ and the API (kept on the server)
+  const [serverPosts, setServerPosts] = useState([]);
+  const [serverPostsState, setServerPostsState] = useState({ loading: false, error: null });
+
+  const loadServerPosts = useCallback(async () => {
+    if (!activeWorkspace) return;
+    setServerPostsState(prev => ({ ...prev, loading: true }));
+    try {
+      const response = await apiFetch(`/api/workspaces/${activeWorkspace}/posts`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to load posts');
+      setServerPosts(data.posts || []);
+      setServerPostsState({ loading: false, error: null });
+    } catch (error) {
+      setServerPostsState({ loading: false, error: error.message });
+    }
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    setServerPosts([]);
+    loadServerPosts();
+  }, [loadServerPosts]);
+
+  // Keep the Queue and Calendar fresh while they are open
+  useEffect(() => {
+    if (activeTab !== 'queue' && activeTab !== 'calendar') return;
+    loadServerPosts();
+    const timer = setInterval(loadServerPosts, 60 * 1000);
+    return () => clearInterval(timer);
+  }, [activeTab, loadServerPosts]);
+
+  const handleServerPostAction = async (post, action, force = false) => {
+    const response = await apiFetch(`/api/workspaces/${activeWorkspace}/posts/${post.id}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 409 && action === 'cancel' && !force) {
+      if (window.confirm(`${data.error}\n\nMark it cancelled here anyway?`)) {
+        return handleServerPostAction(post, action, true);
+      }
+    } else if (!response.ok) {
+      alert(data.error || `Could not ${action} this post`);
+    }
+    await loadServerPosts();
+  };
+
   // Replace a workspace after its server-side settings change
   const handleWorkspaceUpdated = (updated) => {
     setWorkspaces(prev => prev.map(w => (w.id === updated.id ? { ...w, ...updated } : w)));
@@ -2043,7 +2269,8 @@ function StudioApp({ onLogout }) {
     }
   };
 
-  const pendingCount = posts.filter(p => p.status === 'pending').length;
+  const pendingCount = posts.filter(p => p.status === 'pending').length
+    + serverPosts.filter(p => p.status === 'pending' || p.status === 'failed' || (p.status === 'queued' && !p.autoSchedule)).length;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -2083,8 +2310,13 @@ function StudioApp({ onLogout }) {
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
           {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} serverConfig={serverConfig} generatorState={generatorState} setGeneratorState={setGeneratorState} workspace={currentWorkspace} />}
-          {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onUnapprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'pending', approvedAt: null, error: null } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />}
-          {activeTab === 'calendar' && <CalendarView posts={posts} />}
+          {activeTab === 'queue' && (
+            <div className="space-y-10">
+              <ServerPostsPanel posts={serverPosts} loading={serverPostsState.loading} error={serverPostsState.error} onAction={handleServerPostAction} />
+              <ApprovalQueue posts={posts} workspaceSlug={currentWorkspace?.slug} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onUnapprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'pending', approvedAt: null, error: null } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />
+            </div>
+          )}
+          {activeTab === 'calendar' && <CalendarView posts={posts} serverPosts={serverPosts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
           {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} workspace={currentWorkspace} serverConfig={serverConfig} onWorkspaceUpdated={handleWorkspaceUpdated} />}
