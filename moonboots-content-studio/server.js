@@ -3,12 +3,12 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createClient } from '@supabase/supabase-js';
-import sharp from 'sharp';
 import {
   requireAdmin, handleLogin, handleLogout, handleMe,
   safeEqual, sha256, envKeyFor, envKeyName, bearerToken,
 } from './server/auth.js';
 import { createStore } from './server/store.js';
+import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,18 +26,6 @@ const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
 
 // Persistent store for workspace secrets (Supabase table or Railway Volume file)
 const store = createStore(supabase);
-
-// AI provider keys live in Railway variables only, never in the browser
-function claudeApiKey() {
-  return process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || null;
-}
-
-function replicateApiKey() {
-  return process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY || null;
-}
-
-const CLAUDE_KEY_MISSING = 'Claude is not set up on the server. Add ANTHROPIC_API_KEY in Railway > Variables.';
-const REPLICATE_KEY_MISSING = 'Replicate is not set up on the server. Add REPLICATE_API_TOKEN in Railway > Variables.';
 
 // ============ CONTEXT HELPER FUNCTIONS ============
 
@@ -387,7 +375,6 @@ async function storageStatus() {
 app.get('/api/config', async (req, res) => {
   res.json({
     claude: !!claudeApiKey(),
-    replicate: !!replicateApiKey(),
     storage: await storageStatus(),
   });
 });
@@ -922,12 +909,62 @@ app.post('/api/publish', async (req, res) => {
   }
 });
 
-// Claude API proxy endpoint for content generation
+// ============ CONTENT GENERATION (Claude) ============
+
+const POST_PLATFORMS = ['linkedin', 'facebook', 'x', 'instagram'];
+
+const PLATFORM_GUIDELINES = `Platform guidelines:
+- LinkedIn: Professional but human. Can be longer (1000-1500 chars). Use line breaks between paragraphs. No hashtags or max 3 relevant ones at the end.
+- X/Twitter: Concise and punchy. Under 280 characters ideal. Can be provocative or contrarian. No hashtags unless essential.
+- Facebook: Conversational and shareable. 100-250 characters ideal for engagement. Ask questions or share insights. Use 1-2 hashtags max.
+- Instagram: Engaging caption. More personal tone. Include 5-10 relevant hashtags at the very end, separated from main content.`;
+
+// Claude must reply with one post per requested platform
+function postsSchema(platforms) {
+  return {
+    type: 'object',
+    properties: Object.fromEntries(platforms.map(p => [p, { type: 'string' }])),
+    required: platforms,
+    additionalProperties: false,
+  };
+}
+
+function buildPostsPrompt(topic, pillarLine, anglesLine, platforms) {
+  return `Create social media posts about: "${topic}"
+${pillarLine}
+${anglesLine}
+
+Generate unique, platform-optimised content for: ${platforms.join(', ')}
+
+${PLATFORM_GUIDELINES}
+
+Reply with one post per platform, keyed by platform name.`;
+}
+
+// System prompt for a workspace: MoonBoots uses its rich context system, others their brand config
+async function systemPromptFor(workspace, pillar, userId = 'default') {
+  if (workspace && workspace.slug !== 'moonboots') {
+    return { systemPrompt: buildWorkspaceSystemPrompt(workspace, pillar), pillarDetail: findPillar(workspace.pillars, pillar) };
+  }
+  const context = await getGenerationContext(userId);
+  const pillarDetail = findPillar(context.pillars, pillar);
+  return { systemPrompt: buildSystemPrompt(context, pillarDetail), pillarDetail };
+}
+
+function findPillar(pillars, pillar) {
+  if (!pillar) return null;
+  return (pillars || []).find(p => p.name === pillar || p.id === pillar) || null;
+}
+
+function sendClaudeError(res, error, fallbackMessage) {
+  console.error(fallbackMessage, error.message);
+  res.status(error.status || 500).json({ error: error.message || fallbackMessage });
+}
+
 app.post('/api/generate', async (req, res) => {
   const { topic, pillar, platforms, userId = 'default', workspaceId } = req.body;
-  const apiKey = claudeApiKey();
 
-  if (!apiKey) {
+  if (!claudeApiKey()) {
     return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
@@ -936,7 +973,7 @@ app.post('/api/generate', async (req, res) => {
   }
 
   const enabledPlatforms = Object.entries(platforms || {})
-    .filter(([_, enabled]) => enabled)
+    .filter(([platform, enabled]) => enabled && POST_PLATFORMS.includes(platform))
     .map(([platform]) => platform);
 
   if (enabledPlatforms.length === 0) {
@@ -944,122 +981,51 @@ app.post('/api/generate', async (req, res) => {
   }
 
   try {
-    // Check if workspace-specific prompt should be used
-    let systemPrompt;
     const workspace = workspaceId ? await getWorkspaceById(workspaceId) : null;
+    const { systemPrompt, pillarDetail } = await systemPromptFor(workspace, pillar, userId);
 
-    if (workspace && workspace.slug !== 'moonboots') {
-      // Use workspace-specific prompt
-      systemPrompt = buildWorkspaceSystemPrompt(workspace, pillar);
-    }
-
-    if (!systemPrompt) {
-      // Use MoonBoots rich context system
-      const context = await getGenerationContext(userId);
-      const selectedPillar = pillar
-        ? context.pillars.find(p => p.name === pillar || p.id === pillar)
-        : null;
-      systemPrompt = buildSystemPrompt(context, selectedPillar);
-    }
-
-    const userPrompt = `Create social media posts about: "${topic}"
-${selectedPillar ? `Content pillar: ${selectedPillar.name}` : `Content pillar: ${pillar || 'AI Strategy'}`}
-${selectedPillar?.example_angles?.length ? `Possible angles: ${selectedPillar.example_angles.join(', ')}` : ''}
-
-Generate unique, platform-optimised content for: ${enabledPlatforms.join(', ')}
-
-Platform guidelines:
-- LinkedIn: Professional but human. Can be longer (1000-1500 chars). Use line breaks between paragraphs. No hashtags or max 3 relevant ones at the end.
-- X/Twitter: Concise and punchy. Under 280 characters ideal. Can be provocative or contrarian. No hashtags unless essential.
-- Facebook: Conversational and shareable. 100-250 characters ideal for engagement. Ask questions or share insights. Use 1-2 hashtags max.
-- Instagram: Engaging caption. More personal tone. Include 5-10 relevant hashtags at the very end, separated from main content.
-
-Return ONLY valid JSON in this exact format (no markdown, no code blocks, no explanation):
-{
-  ${enabledPlatforms.map(p => `"${p}": "Post content here"`).join(',\n  ')}
-}`;
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
+    const content = await askClaude({
+      purpose: 'drafting',
+      system: systemPrompt,
+      prompt: buildPostsPrompt(
+        topic,
+        pillarDetail ? `Content pillar: ${pillarDetail.name}` : `Content pillar: ${pillar || 'AI Strategy'}`,
+        pillarDetail?.example_angles?.length ? `Possible angles: ${pillarDetail.example_angles.join(', ')}` : '',
+        enabledPlatforms,
+      ),
+      schema: postsSchema(enabledPlatforms),
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Claude API error:', errorData);
-      return res.status(response.status).json({
-        error: errorData.error?.message || 'Claude API request failed',
-        details: errorData
-      });
-    }
-
-    const data = await response.json();
-
-    // Extract text content from Claude response
-    const textContent = data.content?.find(c => c.type === 'text')?.text;
-
-    if (!textContent) {
-      return res.status(500).json({ error: 'No content in Claude response' });
-    }
-
-    // Parse JSON from response (handle potential markdown wrapping)
-    let parsedContent;
-    try {
-      // Remove any markdown code blocks if present
-      const cleanedContent = textContent
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      parsedContent = JSON.parse(cleanedContent);
-    } catch (parseError) {
-      // Try to extract JSON from the response
-      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          parsedContent = JSON.parse(jsonMatch[0]);
-        } catch {
-          console.error('JSON parse error:', parseError, 'Raw content:', textContent);
-          return res.status(500).json({
-            error: 'Failed to parse generated content',
-            raw: textContent
-          });
-        }
-      } else {
-        return res.status(500).json({
-          error: 'Failed to parse generated content',
-          raw: textContent
-        });
-      }
-    }
-
-    res.json({ success: true, content: parsedContent });
-
+    res.json({ success: true, content });
   } catch (error) {
-    console.error('Generate error:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate content' });
+    sendClaudeError(res, error, 'Failed to generate content');
   }
 });
 
-// Topic suggestion endpoint
+// Topic suggestion endpoint (planning model)
 app.post('/api/suggest-topic', async (req, res) => {
-  const { pillar } = req.body;
-  const apiKey = claudeApiKey();
+  const { pillar, workspaceId } = req.body;
 
-  if (!apiKey) {
+  if (!claudeApiKey()) {
     return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
-  const moonbootsContext = `moonboots labs is a consultancy and venture studio ecosystem comprising:
+  const workspace = workspaceId ? await getWorkspaceById(workspaceId) : null;
+
+  let prompt;
+  if (workspace && workspace.slug !== 'moonboots') {
+    prompt = `${buildWorkspaceSystemPrompt(workspace, pillar)}
+
+Based on the content pillar "${pillar || workspace.pillars?.[0]?.name || 'general'}", suggest ONE specific, useful topic for a social media post.
+
+The topic should:
+- Be specific enough to write about (not generic)
+- Speak to the audience this pillar is for
+- Follow every brand rule above
+
+Return ONLY the topic text, nothing else. No quotes, no explanation. Just the topic idea in 1-2 sentences.`;
+  } else {
+    const moonbootsContext = `moonboots labs is a consultancy and venture studio ecosystem comprising:
 
 THE MOONBOOTS LABS ECOSYSTEM:
 
@@ -1110,7 +1076,7 @@ THE MOONBOOTS LABS ECOSYSTEM:
 
 The founder's perspective: Practical, experience-driven insights from working with both startups and enterprises. Skeptical of hype, focused on what actually works. Values community over vanity metrics, substance over buzzwords. Believes creators and brands should own their audience relationships, not rent them from platforms. Committed to moving from strategy → execution.`;
 
-  const prompt = `${moonbootsContext}
+    prompt = `${moonbootsContext}
 
 Based on the content pillar "${pillar || 'AI Strategy'}", suggest ONE compelling, specific topic for a social media post.
 
@@ -1122,405 +1088,13 @@ The topic should:
 - Not be clickbait - genuine insight
 
 Return ONLY the topic text, nothing else. No quotes, no explanation. Just the topic idea in 1-2 sentences.`;
+  }
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 200,
-        messages: [
-          { role: 'user', content: prompt }
-        ],
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Claude API error:', data);
-      return res.status(response.status).json({
-        error: data.error?.message || 'Failed to suggest topic',
-      });
-    }
-
-    const topic = data.content?.[0]?.text?.trim();
-    if (!topic) {
-      return res.status(500).json({ error: 'No topic generated' });
-    }
-
+    const topic = await askClaude({ purpose: 'planning', prompt });
     res.json({ success: true, topic });
   } catch (error) {
-    console.error('Topic suggestion failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to connect to Claude API' });
-  }
-});
-
-// ============ IMAGE GENERATION ENDPOINTS (Replicate + Claude) ============
-
-// Generate optimized image prompt using Claude
-app.post('/api/generate-image-prompt', async (req, res) => {
-  const { postContent, platform, style = 'modern professional' } = req.body;
-  const apiKey = claudeApiKey();
-
-  if (!apiKey) {
-    return res.status(503).json({ error: CLAUDE_KEY_MISSING });
-  }
-
-  if (!postContent) {
-    return res.status(400).json({ error: 'Post content required' });
-  }
-
-  const systemPrompt = `You are an expert at creating image generation prompts for social media posts.
-
-Your task is to create a detailed prompt for an AI image generator (Flux) that will complement the social media post provided.
-
-Guidelines:
-- Create visually striking, professional images suitable for ${platform}
-- Avoid text in the image (text will be overlaid separately)
-- Focus on mood, atmosphere, and visual metaphor
-- Use specific details: lighting, composition, color palette, style
-- Keep it abstract/conceptual rather than literal where appropriate
-- Never include people's faces or identifiable individuals
-- Aim for images that work well with text overlay
-- Use dark/moody backgrounds that contrast well with white text
-
-Style preference: ${style}
-
-Output ONLY the image prompt, nothing else. No explanations, no preamble.`;
-
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: `Create an image prompt for this ${platform} post:\n\n"${postContent}"`
-        }],
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('Claude API error:', error);
-      return res.status(response.status).json({ error: 'Failed to generate image prompt' });
-    }
-
-    const data = await response.json();
-    const prompt = data.content?.[0]?.text?.trim();
-
-    res.json({ imagePrompt: prompt });
-
-  } catch (error) {
-    console.error('Generate image prompt failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Generate image using Replicate (Flux Schnell)
-app.post('/api/generate-image', async (req, res) => {
-  const { prompt, aspectRatio = '1:1' } = req.body;
-  const replicateKey = replicateApiKey();
-
-  if (!replicateKey) {
-    return res.status(503).json({ error: REPLICATE_KEY_MISSING });
-  }
-
-  if (!prompt) {
-    return res.status(400).json({ error: 'Prompt required' });
-  }
-
-  // Map aspect ratios for different platforms
-  const aspectRatios = {
-    'square': '1:1',      // Instagram feed
-    'portrait': '4:5',    // Instagram optimal
-    'landscape': '16:9',  // X/Twitter, LinkedIn
-    'story': '9:16'       // Instagram stories
-  };
-
-  const ratio = aspectRatios[aspectRatio] || aspectRatio;
-  console.log('Generating image with Replicate, aspect ratio:', ratio);
-
-  try {
-    // Start prediction with Flux Schnell
-    const startResponse = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${replicateKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        input: {
-          prompt: prompt,
-          aspect_ratio: ratio,
-          output_format: 'webp',
-          output_quality: 90,
-        }
-      }),
-    });
-
-    if (!startResponse.ok) {
-      const error = await startResponse.json().catch(() => ({}));
-      console.error('Replicate start error:', error);
-      return res.status(startResponse.status).json({
-        error: error.detail || error.error || 'Failed to start image generation'
-      });
-    }
-
-    const prediction = await startResponse.json();
-    console.log('Replicate prediction started:', prediction.id);
-
-    // Poll for completion
-    let result = prediction;
-    let attempts = 0;
-    const maxAttempts = 60; // 60 seconds max
-
-    while (result.status !== 'succeeded' && result.status !== 'failed' && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      const pollResponse = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
-        headers: { 'Authorization': `Bearer ${replicateKey}` }
-      });
-
-      result = await pollResponse.json();
-      attempts++;
-
-      if (attempts % 5 === 0) {
-        console.log('Replicate status:', result.status, 'attempts:', attempts);
-      }
-    }
-
-    if (result.status === 'failed') {
-      console.error('Replicate generation failed:', result.error);
-      return res.status(500).json({ error: result.error || 'Image generation failed' });
-    }
-
-    if (result.status !== 'succeeded') {
-      return res.status(408).json({ error: 'Image generation timed out' });
-    }
-
-    // Flux returns array of URLs
-    const imageUrl = Array.isArray(result.output) ? result.output[0] : result.output;
-    console.log('Image generated successfully');
-
-    // Fetch image and convert to base64 for consistency with frontend
-    try {
-      const imgResponse = await fetch(imageUrl);
-      const imgBuffer = await imgResponse.arrayBuffer();
-      const base64 = Buffer.from(imgBuffer).toString('base64');
-
-      res.json({
-        success: true,
-        image: `data:image/webp;base64,${base64}`,
-        imageUrl: imageUrl,
-        predictionId: result.id
-      });
-    } catch (fetchErr) {
-      // Return URL if fetch fails
-      res.json({
-        success: true,
-        imageUrl: imageUrl,
-        predictionId: result.id
-      });
-    }
-
-  } catch (error) {
-    console.error('Replicate image generation failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate image' });
-  }
-});
-
-// Add text overlay to image using Sharp
-app.post('/api/add-text-overlay', async (req, res) => {
-  const {
-    imageUrl,
-    overlayText,
-    position = 'center',  // top, center, bottom
-    style = 'default'     // default, bold, minimal, gradient
-  } = req.body;
-
-  if (!imageUrl || !overlayText) {
-    return res.status(400).json({ error: 'Image URL and overlay text required' });
-  }
-
-  try {
-    // Fetch the image (handle both URLs and base64)
-    let imageBuffer;
-    if (imageUrl.startsWith('data:')) {
-      const base64Data = imageUrl.split(',')[1];
-      imageBuffer = Buffer.from(base64Data, 'base64');
-    } else {
-      const imageResponse = await fetch(imageUrl);
-      imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-    }
-
-    // Get image dimensions
-    const metadata = await sharp(imageBuffer).metadata();
-    const { width, height } = metadata;
-
-    // Calculate text positioning
-    const padding = Math.round(width * 0.08);
-    const maxTextWidth = width - (padding * 2);
-
-    // Position Y based on selection
-    const positions = {
-      top: Math.round(height * 0.15),
-      center: Math.round(height * 0.5),
-      bottom: Math.round(height * 0.85)
-    };
-    const textY = positions[position] || positions.center;
-
-    // Style configurations
-    const styles = {
-      default: {
-        fontSize: Math.round(width * 0.055),
-        fontWeight: 600,
-        fill: '#FFFFFF',
-        shadow: true,
-        background: 'rgba(0,0,0,0.4)',
-        backgroundPadding: 20
-      },
-      bold: {
-        fontSize: Math.round(width * 0.07),
-        fontWeight: 700,
-        fill: '#FFFFFF',
-        shadow: true,
-        background: 'rgba(0,0,0,0.6)',
-        backgroundPadding: 30
-      },
-      minimal: {
-        fontSize: Math.round(width * 0.05),
-        fontWeight: 400,
-        fill: '#FFFFFF',
-        shadow: true,
-        background: 'none',
-        backgroundPadding: 0
-      },
-      gradient: {
-        fontSize: Math.round(width * 0.055),
-        fontWeight: 600,
-        fill: '#FFFFFF',
-        shadow: false,
-        background: 'gradient',
-        backgroundPadding: 40
-      }
-    };
-
-    const currentStyle = styles[style] || styles.default;
-
-    // Word wrap text
-    const words = overlayText.split(' ');
-    const lines = [];
-    let currentLine = '';
-    const charsPerLine = Math.floor(maxTextWidth / (currentStyle.fontSize * 0.55));
-
-    words.forEach(word => {
-      if ((currentLine + ' ' + word).trim().length <= charsPerLine) {
-        currentLine = (currentLine + ' ' + word).trim();
-      } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-      }
-    });
-    if (currentLine) lines.push(currentLine);
-
-    // Build SVG overlay
-    const lineHeight = currentStyle.fontSize * 1.4;
-    const textBlockHeight = lines.length * lineHeight;
-    const textStartY = textY - (textBlockHeight / 2);
-
-    // Escape XML special characters
-    const escapeXml = (text) => text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
-
-    let backgroundSvg = '';
-    if (currentStyle.background === 'gradient') {
-      backgroundSvg = `
-        <defs>
-          <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" style="stop-color:rgba(0,0,0,0)"/>
-            <stop offset="50%" style="stop-color:rgba(0,0,0,0.7)"/>
-            <stop offset="100%" style="stop-color:rgba(0,0,0,0)"/>
-          </linearGradient>
-        </defs>
-        <rect x="0" y="${textStartY - currentStyle.backgroundPadding}"
-              width="${width}" height="${textBlockHeight + currentStyle.backgroundPadding * 2}"
-              fill="url(#grad)"/>
-      `;
-    } else if (currentStyle.background !== 'none') {
-      backgroundSvg = `
-        <rect x="${padding - currentStyle.backgroundPadding}"
-              y="${textStartY - currentStyle.backgroundPadding}"
-              width="${maxTextWidth + currentStyle.backgroundPadding * 2}"
-              height="${textBlockHeight + currentStyle.backgroundPadding * 2}"
-              rx="8" ry="8"
-              fill="${currentStyle.background}"/>
-      `;
-    }
-
-    const textSvg = lines.map((line, i) => {
-      const y = textStartY + (i * lineHeight) + currentStyle.fontSize;
-      const shadow = currentStyle.shadow
-        ? `style="filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.8))"`
-        : '';
-      return `<text x="${width / 2}" y="${y}"
-                    font-family="Arial, Helvetica, sans-serif"
-                    font-size="${currentStyle.fontSize}"
-                    font-weight="${currentStyle.fontWeight}"
-                    fill="${currentStyle.fill}"
-                    text-anchor="middle"
-                    ${shadow}>${escapeXml(line)}</text>`;
-    }).join('\n');
-
-    const svgOverlay = `
-      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-        ${backgroundSvg}
-        ${textSvg}
-      </svg>
-    `;
-
-    // Composite image with overlay
-    const outputBuffer = await sharp(imageBuffer)
-      .composite([{
-        input: Buffer.from(svgOverlay),
-        top: 0,
-        left: 0,
-      }])
-      .webp({ quality: 90 })
-      .toBuffer();
-
-    // Convert to base64 data URL
-    const base64 = outputBuffer.toString('base64');
-    const dataUrl = `data:image/webp;base64,${base64}`;
-
-    console.log('Text overlay applied successfully');
-    res.json({
-      success: true,
-      image: dataUrl,
-      width,
-      height
-    });
-
-  } catch (error) {
-    console.error('Text overlay error:', error);
-    res.status(500).json({ error: error.message });
+    sendClaudeError(res, error, 'Failed to suggest topic');
   }
 });
 
@@ -1974,82 +1548,26 @@ app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
     return res.status(400).json({ error: 'topic is required' });
   }
 
-  const claudeKey = claudeApiKey();
-  if (!claudeKey) {
+  if (!claudeApiKey()) {
     return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
-  const enabledPlatforms = Array.isArray(platforms) ? platforms : [platforms];
+  const enabledPlatforms = (Array.isArray(platforms) ? platforms : [platforms]).filter(p => typeof p === 'string' && p);
 
   try {
-    // Build workspace-specific system prompt
-    let systemPrompt = buildWorkspaceSystemPrompt(workspace, content_pillar);
-
-    // For MoonBoots, use the rich context system
-    if (!systemPrompt) {
-      const context = await getGenerationContext('default');
-      const pillar = content_pillar
-        ? context.pillars.find(p => p.name === content_pillar || p.id === content_pillar)
-        : null;
-      systemPrompt = buildSystemPrompt(context, pillar);
-    }
+    let { systemPrompt } = await systemPromptFor(workspace, content_pillar);
 
     // Override voice if provided
     if (brand_voice) {
       systemPrompt += `\n\nAdditional voice direction: ${brand_voice}`;
     }
 
-    const userPrompt = `Create social media posts about: "${topic}"
-${content_pillar ? `Content pillar: ${content_pillar}` : ''}
-
-Generate unique, platform-optimised content for: ${enabledPlatforms.join(', ')}
-
-Platform guidelines:
-- LinkedIn: Professional but human. Can be longer (1000-1500 chars). Use line breaks between paragraphs. No hashtags or max 3 relevant ones at the end.
-- X/Twitter: Concise and punchy. Under 280 characters ideal. Can be provocative or contrarian. No hashtags unless essential.
-- Facebook: Conversational and shareable. 100-250 characters ideal for engagement. Ask questions or share insights. Use 1-2 hashtags max.
-- Instagram: Engaging caption. More personal tone. Include 5-10 relevant hashtags at the very end, separated from main content.
-
-Return ONLY valid JSON in this exact format (no markdown, no code blocks, no explanation):
-{
-  ${enabledPlatforms.map(p => `"${p}": "Post content here"`).join(',\n  ')}
-}`;
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': claudeKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
+    const parsedContent = await askClaude({
+      purpose: 'drafting',
+      system: systemPrompt,
+      prompt: buildPostsPrompt(topic, content_pillar ? `Content pillar: ${content_pillar}` : '', '', enabledPlatforms),
+      schema: postsSchema(enabledPlatforms),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return res.status(response.status).json({ error: errorData.error?.message || 'Content generation failed' });
-    }
-
-    const data = await response.json();
-    const textContent = data.content?.find(c => c.type === 'text')?.text;
-
-    let parsedContent;
-    try {
-      const cleaned = textContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      parsedContent = JSON.parse(cleaned);
-    } catch {
-      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsedContent = JSON.parse(jsonMatch[0]);
-      } else {
-        return res.status(500).json({ error: 'Failed to parse generated content', raw: textContent });
-      }
-    }
 
     // Calculate scheduled times
     const scheduledTimes = {};
@@ -2118,7 +1636,7 @@ Return ONLY valid JSON in this exact format (no markdown, no code blocks, no exp
     });
   } catch (error) {
     console.error('API generate error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -2581,72 +2099,6 @@ app.post('/api/posts', async (req, res) => {
 
   await savePost(post);
   console.log(`[Marcus] Post ${postId} created for ${workspace.name} on ${platform}`);
-
-  // Generate image if requested (async, don't block response)
-  if (generateImage) {
-    const claudeKey = claudeApiKey();
-    const replicateKey = replicateApiKey();
-
-    if (claudeKey && replicateKey) {
-      // Run image generation in background
-      (async () => {
-        try {
-          console.log(`[Marcus] Generating image for post ${postId}...`);
-
-          // Step 1: Generate prompt via Claude
-          const promptResp = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': claudeKey,
-              'anthropic-version': '2023-06-01',
-            },
-            body: JSON.stringify({
-              model: 'claude-sonnet-4-20250514',
-              max_tokens: 500,
-              system: `You create image generation prompts for social media. Style: ${imageStyle || 'modern professional'}. Output ONLY the prompt.`,
-              messages: [{ role: 'user', content: `Create an image prompt for this ${platform} post:\n\n"${content}"` }],
-            }),
-          });
-          const promptData = await promptResp.json();
-          const imagePrompt = promptData.content?.[0]?.text?.trim();
-
-          if (!imagePrompt) {
-            console.error(`[Marcus] No image prompt generated for ${postId}`);
-            return;
-          }
-
-          // Step 2: Generate image via Replicate
-          const aspectRatio = platform === 'instagram' ? '4:5' : '16:9';
-          const startResp = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${replicateKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ input: { prompt: imagePrompt, aspect_ratio: aspectRatio, output_format: 'webp', output_quality: 90 } }),
-          });
-          let prediction = await startResp.json();
-
-          // Poll for completion
-          let attempts = 0;
-          while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && attempts < 60) {
-            await new Promise(r => setTimeout(r, 1000));
-            const pollResp = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-              headers: { 'Authorization': `Bearer ${replicateKey}` },
-            });
-            prediction = await pollResp.json();
-            attempts++;
-          }
-
-          if (prediction.status === 'succeeded') {
-            const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-            await updatePost(postId, { image: imageUrl });
-            console.log(`[Marcus] Image generated for post ${postId}`);
-          }
-        } catch (e) {
-          console.error(`[Marcus] Image generation failed for ${postId}:`, e.message);
-        }
-      })();
-    }
-  }
 
   // If scheduleFor is set, queue for later; otherwise try to publish now
   if (scheduleFor) {

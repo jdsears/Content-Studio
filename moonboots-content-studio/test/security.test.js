@@ -45,7 +45,7 @@ before(async () => {
 
   const env = { ...process.env, PORT: String(PORT), ADMIN_PASSWORD, TOUCHLINE_API_KEY: TOUCHLINE_KEY, DATA_DIR: dataDir };
   for (const name of ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'MOONBOOTS_API_KEY', 'ANTHROPIC_API_KEY',
-    'CLAUDE_API_KEY', 'REPLICATE_API_TOKEN', 'REPLICATE_API_KEY', 'RAILWAY_ENVIRONMENT', 'RAILWAY_VOLUME_MOUNT_PATH']) {
+    'CLAUDE_API_KEY', 'ANTHROPIC_BASE_URL', 'RAILWAY_ENVIRONMENT', 'RAILWAY_VOLUME_MOUNT_PATH']) {
     delete env[name];
   }
   server = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: 'ignore' });
@@ -205,7 +205,7 @@ test('AI routes use server keys and say clearly when they are missing', async ()
   assert.match(res.json.error, /ANTHROPIC_API_KEY/);
 
   const config = await api('/api/config', { auth: 'admin' });
-  assert.deepEqual({ claude: config.json.claude, replicate: config.json.replicate }, { claude: false, replicate: false });
+  assert.equal(config.json.claude, false);
 });
 
 test('publishing ignores keys sent from the browser', async () => {
