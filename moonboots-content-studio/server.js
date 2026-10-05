@@ -12,6 +12,7 @@ import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js'
 import * as publer from './server/publer.js';
 import { createPostService, toApiPost, PostError, PLATFORMS } from './server/posts.js';
 import { checkContent, prepareForPublishing } from './shared/brand.js';
+import { makePostImage } from './server/cards.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -31,7 +32,7 @@ const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
 const store = createStore(supabase);
 
 // Posts from Touchline HQ and the v1 API, and the scheduler that sends them to Publer
-const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets });
+const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage: makePostImage });
 
 // ============ CONTEXT HELPER FUNCTIONS ============
 
