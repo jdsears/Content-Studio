@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { checkContent } from '../shared/brand.js';
+import { checkContent, TOUCHLINE_COLOURS } from '../shared/brand.js';
 
 // All app API calls go through here. If the login has expired the app returns to the login screen.
 const apiFetch = async (url, options = {}) => {
@@ -49,12 +49,32 @@ const industryBenchmarks = {
   instagram: { frequency: { min: 3, max: 5, unit: 'week' }, bestDays: ['Monday', 'Wednesday', 'Friday', 'Sunday'], bestHours: [11, 13, 18, 20] },
 };
 
-const Logo = () => (
+// The Touchline mark (green or white on navy)
+const TouchlineMark = ({ className = 'h-5 w-8', colour = TOUCHLINE_COLOURS.green }) => (
+  <svg viewBox="0 0 64 40" className={className} style={{ color: colour }} aria-hidden="true">
+    <g fill="none" stroke="currentColor" strokeLinecap="round">
+      <path d="M16 32 A16 16 0 0 1 48 32" strokeWidth="3.6" />
+      <line x1="6" y1="32" x2="58" y2="32" strokeWidth="3.6" />
+      <circle cx="32" cy="32" r="5.6" strokeWidth="1.2" opacity="0.32" />
+    </g>
+    <circle cx="32" cy="32" r="3.4" fill="currentColor" />
+  </svg>
+);
+
+const Logo = ({ workspace }) => (workspace?.slug === 'touchline' ? (
+  <div className="flex flex-col items-start">
+    <div className="flex items-center gap-2">
+      <TouchlineMark />
+      <span className="text-lg leading-6 text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 400 }}>Touchline</span>
+    </div>
+    <span className="text-[10px] font-light text-slate-400 tracking-widest -mt-0.5">content studio</span>
+  </div>
+) : (
   <div className="flex flex-col items-start">
     <img src="/moonboots-logo.png" alt="moonboots" className="h-6" />
     <span className="text-[10px] font-light text-slate-400 tracking-widest -mt-0.5">content studio</span>
   </div>
-);
+));
 
 const PlatformIcon = ({ platform, className = "w-5 h-5" }) => {
   const icons = {
@@ -88,8 +108,110 @@ const TabButton = ({ active, onClick, children, count }) => (
   </button>
 );
 
+// Touchline image themes: white or green on navy
+const touchlineThemes = {
+  'tl-green': { name: 'Navy & green', gradient: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], accent: TOUCHLINE_COLOURS.green },
+  'tl-white': { name: 'Navy & white', gradient: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], accent: TOUCHLINE_COLOURS.white },
+};
+
+// Draw the Touchline mark (viewBox 64 x 40) at x, y, `width` wide
+const drawTouchlineMark = (ctx, x, y, width, colour) => {
+  const scale = width / 64;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = colour;
+  ctx.fillStyle = colour;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 3.6;
+  ctx.beginPath();
+  ctx.arc(32, 32, 16, Math.PI, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(6, 32);
+  ctx.lineTo(58, 32);
+  ctx.stroke();
+  ctx.globalAlpha = 0.32;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(32, 32, 5.6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(32, 32, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+};
+
+// Touchline template image: navy, the mark, the Inter wordmark and touchline.xyz. Never Moonboots branding.
+const generateTouchlineTemplateImage = async (content, platform, theme) => {
+  await Promise.all(['400', '600', '700'].map(weight => document.fonts.load(`${weight} 40px Inter`).catch(() => {})));
+
+  const sizes = {
+    instagram: { width: 1080, height: 1350 },
+    linkedin: { width: 1200, height: 1200 },
+    facebook: { width: 1200, height: 1200 },
+    x: { width: 1200, height: 675 },
+  };
+  const { width, height } = sizes[platform] || sizes.linkedin;
+  const t = touchlineThemes[theme] || touchlineThemes['tl-green'];
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const unit = Math.min(width, height) / 1080;
+  const pad = Math.round(Math.min(width, height) * 0.08);
+
+  ctx.fillStyle = TOUCHLINE_COLOURS.navy;
+  ctx.fillRect(0, 0, width, height);
+
+  // Mark and wordmark
+  const markWidth = 104 * unit;
+  drawTouchlineMark(ctx, pad, pad, markWidth, t.accent);
+  ctx.font = `400 ${Math.round(46 * unit)}px Inter, sans-serif`;
+  ctx.fillStyle = TOUCHLINE_COLOURS.white;
+  ctx.fillText('Touchline', pad + markWidth + 20 * unit, pad + 32 * (markWidth / 64));
+
+  // Headline and body
+  const paragraphs = content.split('\n').map(l => l.trim()).filter(Boolean);
+  const maxWidth = width - pad * 2;
+  let y = pad + 40 * (markWidth / 64) + 96 * unit;
+  ctx.fillStyle = TOUCHLINE_COLOURS.green;
+  ctx.fillRect(pad, y - 44 * unit, 88 * unit, 8 * unit);
+
+  const headlineSize = Math.round(52 * unit);
+  ctx.font = `700 ${headlineSize}px Inter, sans-serif`;
+  ctx.fillStyle = TOUCHLINE_COLOURS.white;
+  for (const line of wrapText(ctx, paragraphs[0] || '', maxWidth).slice(0, 5)) {
+    y += headlineSize * 1.2;
+    ctx.fillText(line, pad, y);
+  }
+
+  const bodySize = Math.round(30 * unit);
+  const footerY = height - pad;
+  ctx.font = `400 ${bodySize}px Inter, sans-serif`;
+  ctx.fillStyle = '#B8C4D6';
+  y += bodySize;
+  for (const para of paragraphs.slice(1)) {
+    if (y > footerY - bodySize * 3) break;
+    for (const line of wrapText(ctx, para, maxWidth)) {
+      if (y > footerY - bodySize * 3) break;
+      y += bodySize * 1.4;
+      ctx.fillText(line, pad, y);
+    }
+    y += bodySize * 0.6;
+  }
+
+  ctx.font = `600 ${Math.round(32 * unit)}px Inter, sans-serif`;
+  ctx.fillStyle = TOUCHLINE_COLOURS.green;
+  ctx.fillText('touchline.xyz', pad, footerY);
+
+  return canvas.toDataURL('image/png');
+};
+
 // Generate template-based image using canvas
-const generateTemplateImage = async (content, template, platform, theme = 'midnight') => {
+const generateTemplateImage = async (content, template, platform, theme = 'midnight', brand = 'moonboots') => {
+  if (brand === 'touchline') return generateTouchlineTemplateImage(content, platform, theme);
   const canvas = document.createElement('canvas');
 
   // Platform-optimized sizes
@@ -230,8 +352,17 @@ const wrapText = (ctx, text, maxWidth) => {
 };
 
 // Generate next available time slots for a platform
-const getNextTimeSlots = (platform, count = 5) => {
-  const benchmark = industryBenchmarks[platform];
+// Posting times for a platform: the workspace's own, or the general benchmarks
+const postingTimesFor = (workspace, platform) => {
+  const own = workspace?.brand_config?.posting_frequency?.[platform];
+  if (own?.days?.length && own?.hours?.length) {
+    return { frequency: { min: own.min, max: own.max, unit: 'week' }, bestDays: own.days, bestHours: own.hours };
+  }
+  return industryBenchmarks[platform];
+};
+
+const getNextTimeSlots = (platform, count = 5, workspace = null) => {
+  const benchmark = postingTimesFor(workspace, platform);
   const slots = [];
   const now = new Date();
   let currentDay = now.getDay(); // 0 = Sunday
@@ -267,6 +398,9 @@ const getNextTimeSlots = (platform, count = 5) => {
 };
 
 // Template themes with colors
+// Image themes per workspace
+const themesFor = (slug) => (slug === 'touchline' ? touchlineThemes : templateThemes);
+
 const templateThemes = {
   midnight: { name: 'Midnight', gradient: ['#0f172a', '#1e3a5f'], accent: '#3b82f6' },
   forest: { name: 'Forest', gradient: ['#064e3b', '#065f46'], accent: '#10b981' },
@@ -303,6 +437,10 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
 
   const [generating, setGenerating] = useState(false);
   const [showScheduleOptions, setShowScheduleOptions] = useState(null);
+
+  // Themes for this workspace; a theme from another workspace falls back to the first one
+  const themes = themesFor(workspace?.slug);
+  const themeKey = (theme) => (themes[theme] ? theme : Object.keys(themes)[0]);
   const [expandedImage, setExpandedImage] = useState(null);
 
   // Helper to update lifted state
@@ -341,6 +479,9 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
 
     let content;
 
+    // Only MoonBoots has canned fallback posts; other workspaces show the problem instead
+    const canUseFallback = !workspace || workspace.slug === 'moonboots';
+
     // Use Claude if the server has a key, otherwise use fallback
     if (serverConfig?.claude) {
       try {
@@ -363,6 +504,11 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
         content = data.content;
       } catch (error) {
         console.error('Content generation failed:', error);
+        if (!canUseFallback) {
+          alert(`Failed to generate content: ${error.message}`);
+          setGenerating(false);
+          return;
+        }
         alert(`Failed to generate content: ${error.message}. Using fallback templates.`);
         // Fallback to templates
         content = {
@@ -372,6 +518,11 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
         };
       }
     } else {
+      if (!canUseFallback) {
+        alert(CLAUDE_NOT_SET);
+        setGenerating(false);
+        return;
+      }
       // No API key - use fallback templates
       content = {
         linkedin: `${topic}\n\nThis isn't about chasing trends—it's about building systems that last.\n\nThree things I've learned:\n\n1. Start with the problem, not the technology\n2. Simple beats sophisticated every time\n3. Your users will tell you what they need—if you listen\n\nThe organisations getting this right aren't the loudest. They're the most curious.`,
@@ -395,7 +546,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
       const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
 
       try {
-        const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
+        const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, themeKey(imgSettings.theme), workspace?.slug);
 
         if (imageUrl) {
           setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
@@ -415,7 +566,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
 
     try {
-      const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
+      const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, themeKey(imgSettings.theme), workspace?.slug);
       setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
     } catch (error) {
       console.error(`Template image regeneration failed for ${platform}:`, error);
@@ -440,7 +591,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
         scheduledTime = dt.toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
         scheduledISO = dt.toISOString();
       } else if (scheduleMode === 'optimal' && useOptimalTiming) {
-        const slot = selectedSlots[platform] || getNextTimeSlots(platform, 1)[0];
+        const slot = selectedSlots[platform] || getNextTimeSlots(platform, 1, workspace)[0];
         scheduledTime = slot ? slot.full : null;
         scheduledISO = slot ? slot.date.toISOString() : null;
       }
@@ -492,9 +643,9 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
         {scheduleMode === 'optimal' && (
           <div className="space-y-3">
             {['linkedin', 'facebook', 'x', 'instagram'].filter(p => platforms[p]).map(platform => {
-              const slots = getNextTimeSlots(platform, 5);
+              const slots = getNextTimeSlots(platform, 5, workspace);
               const selected = selectedSlots[platform] || slots[0];
-              const benchmark = industryBenchmarks[platform];
+              const benchmark = postingTimesFor(workspace, platform);
               return (
                 <div key={platform} className="p-3 bg-slate-900/50 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
@@ -631,7 +782,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                       className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200"
                     >
                       <span className="px-2 py-0.5 bg-slate-700/50 rounded">
-                        {imgSettings.enabled ? `${imgSettings.theme}` : 'No image'}
+                        {imgSettings.enabled ? themes[themeKey(imgSettings.theme)].name : 'No image'}
                       </span>
                       <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                     </button>
@@ -679,11 +830,11 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                             <div>
                               <span className="text-xs text-slate-400 block mb-2">Theme</span>
                               <div className="grid grid-cols-3 gap-1">
-                                {Object.entries(templateThemes).map(([key, theme]) => (
+                                {Object.entries(themes).map(([key, theme]) => (
                                   <button
                                     key={key}
                                     onClick={() => updatePlatformImageSetting(platform, 'theme', key)}
-                                    className={`px-2 py-1.5 text-xs rounded flex items-center gap-1.5 ${imgSettings.theme === key ? 'ring-2 ring-white' : ''}`}
+                                    className={`px-2 py-1.5 text-xs rounded flex items-center gap-1.5 ${themeKey(imgSettings.theme) === key ? 'ring-2 ring-white' : ''}`}
                                     style={{ background: `linear-gradient(135deg, ${theme.gradient[0]}, ${theme.gradient[1]})` }}
                                   >
                                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.accent }} />
@@ -722,7 +873,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                     <span className="text-sm text-slate-300 capitalize">{platform === 'x' ? 'X (Manual)' : platform}</span>
                     {imgSettings.enabled && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
-                        {templateThemes[imgSettings.theme]?.name || imgSettings.theme}
+                        {themes[themeKey(imgSettings.theme)].name}
                       </span>
                     )}
                     {useOptimalTiming && selectedSlots[platform] && <span className="text-xs text-blue-400">→ {selectedSlots[platform].full}</span>}
@@ -1416,11 +1567,45 @@ const CalendarView = ({ posts, serverPosts = [] }) => {
 };
 
 // Quote Card Maker
-const QuoteCardMaker = () => {
+const QuoteCardMaker = ({ workspace }) => {
   const [quote, setQuote] = useState('');
   const [style, setStyle] = useState('dark');
+
+  // Touchline cards: white or green mark on navy, never Moonboots branding
+  if (workspace?.slug === 'touchline') {
+    const markColour = style === 'white' ? TOUCHLINE_COLOURS.white : TOUCHLINE_COLOURS.green;
+    return (
+      <div className="space-y-6">
+        <div>
+          <label className="block text-sm text-slate-400 mb-2">Quote text</label>
+          <textarea value={quote} onChange={(e) => setQuote(e.target.value)} placeholder="Enter your quote..." className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg text-white placeholder-slate-500 focus:outline-none resize-none" rows={3} />
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400 mb-2">Style</label>
+          <div className="flex gap-2">
+            {[['dark', 'Navy & green'], ['white', 'Navy & white']].map(([key, label]) => (
+              <button key={key} onClick={() => setStyle(key)} className={`px-4 py-2 text-sm rounded-lg border ${style === key ? 'bg-white text-slate-900' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400 mb-2">Preview</label>
+          <div className="aspect-square max-w-md mx-auto rounded-xl p-8 flex flex-col justify-between" style={{ backgroundColor: TOUCHLINE_COLOURS.navy, fontFamily: 'Inter, sans-serif' }}>
+            <div className="flex items-center gap-2">
+              <TouchlineMark className="h-5 w-8" colour={markColour} />
+              <span className="text-base text-white" style={{ fontWeight: 400 }}>Touchline</span>
+            </div>
+            <p className="text-xl leading-relaxed text-white" style={{ fontWeight: 700 }}>{quote || 'Your quote here...'}</p>
+            <div className="text-sm" style={{ color: TOUCHLINE_COLOURS.green, fontWeight: 600 }}>touchline.xyz</div>
+          </div>
+        </div>
+        <button disabled={!quote} className="w-full py-3 bg-white text-slate-900 font-medium rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">Download Image</button>
+      </div>
+    );
+  }
+
   const styles = { dark: { bg: 'bg-slate-900', text: 'text-white', accent: 'text-slate-400' }, light: { bg: 'bg-white', text: 'text-slate-900', accent: 'text-slate-500' }, gradient: { bg: 'bg-gradient-to-br from-slate-900 to-blue-900', text: 'text-white', accent: 'text-slate-300' } };
-  const s = styles[style];
+  const s = styles[style] || styles.dark;
 
   return (
     <div className="space-y-6">
@@ -2303,7 +2488,7 @@ function StudioApp({ onLogout }) {
       <header className="border-b border-slate-800/50">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Logo />
+            <Logo workspace={currentWorkspace} />
             {workspaces.length > 1 && (
               <WorkspaceSwitcher
                 workspaces={workspaces}
@@ -2343,7 +2528,7 @@ function StudioApp({ onLogout }) {
             </div>
           )}
           {activeTab === 'calendar' && <CalendarView posts={posts} serverPosts={serverPosts} />}
-          {activeTab === 'graphics' && <QuoteCardMaker />}
+          {activeTab === 'graphics' && <QuoteCardMaker workspace={currentWorkspace} />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
           {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} workspace={currentWorkspace} serverConfig={serverConfig} onWorkspaceUpdated={handleWorkspaceUpdated} />}
         </div>
