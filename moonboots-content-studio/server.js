@@ -181,8 +181,26 @@ const defaultWorkspaces = [
     name: 'Touchline',
     slug: 'touchline',
     brand_config: {
-      tagline: 'Empowering Grassroots Football',
-      tone: 'Enthusiastic, knowledgeable, supportive, community-focused. Never corporate or salesy.',
+      tagline: 'The all-in-one grassroots football app',
+      tone: 'British English. Write like a grassroots coach talking on the touchline to other coaches and parents, not like a press release. Warm, practical and specific, with short sentences and plain words.',
+      lead_message: "What a manager says on the touchline (as a Voice Note or typed notes) or films on a Sunday becomes notes on every player under the FA's four corners (technical/tactical, physical, psychological, social), and then each child's development plan (IDP). The coach confirms everything before it is saved. Families see their child's plan in the Player Lounge.",
+      style_rules: [
+        'Use British English spelling and grassroots football words (match, pitch, kit, under 9s).',
+        'Never use em dashes, en dashes or spaced hyphens as dashes. Use full stops, commas or colons instead.',
+        'Write Voice Notes, Player Lounge and IDP exactly like that.',
+      ],
+      never_claim: [
+        'That Touchline is "the only" or "the first" anything.',
+        'Any FA Charter Standard or England Football Accredited endorsement.',
+        'Atlas player tracking.',
+        'That Touchline is a native app or is in an app store.',
+        "Time savings we can't prove, such as hours saved each week.",
+      ],
+      example_rules: [
+        'Use the invented club Wicklewood Wanderers in examples.',
+        'Never name real children, real clubs or real coaches.',
+      ],
+      register_link: 'touchline.xyz/register',
       forbidden_topics: ['Gambling', 'Alcohol', 'Politics', 'Professional transfer gossip'],
       posting_frequency: {
         linkedin: { min: 3, max: 5, days: ['Tuesday', 'Wednesday', 'Thursday'], hours: [8, 9, 10] },
@@ -192,11 +210,10 @@ const defaultWorkspaces = [
       },
     },
     pillars: [
-      { id: 'coaching', name: 'Coaching Tips & Drills', description: 'Practical coaching advice for grassroots football', example_angles: ['Training drill of the week', 'Session planning tips', 'Age-appropriate coaching'] },
-      { id: 'grassroots', name: 'Grassroots Football Culture', description: 'Celebrating the grassroots game', example_angles: ['Weekend matchday stories', 'Why grassroots matters', 'Volunteer appreciation'] },
-      { id: 'development', name: 'Player Development', description: 'Helping young players grow', example_angles: ['Technical skill progression', 'Mental resilience', 'Fun-first philosophy'] },
-      { id: 'community', name: 'Community & Club Stories', description: 'Stories from clubs and communities', example_angles: ['Club spotlights', 'Parent involvement', 'Inclusive football'] },
-      { id: 'product', name: 'Product Updates & Features', description: 'Touchline platform news', example_angles: ['New features', 'How coaches use Touchline', 'Roadmap previews'] },
+      { id: 'coaches', name: 'Coaches & managers', description: "Voice Notes and match video become notes on every player and each child's development plan, with the coach confirming everything.", example_angles: ['A Voice Note on the drive home becomes notes on every player', "Sunday's match video turned into each child's development plan", 'Notes under all four corners, confirmed by the coach'] },
+      { id: 'parents', name: 'Parents', description: 'A development plan about their own child, shared in the Player Lounge. Parents are free.', example_angles: ['What your child is working on this month', "Seeing your child's plan in the Player Lounge", 'Parents never pay for Touchline'] },
+      { id: 'clubs', name: 'Clubs', description: 'Development visible across every team, in one app instead of four subscriptions.', example_angles: ["Every team's player development in one place", 'One app instead of four subscriptions', 'The same development approach from under 7s upwards'] },
+      { id: 'coaching-tips', name: 'Coaching tips & grassroots culture', description: 'Practical coaching ideas and the culture of the grassroots game.', example_angles: ['A session that still works on a wet Tuesday', 'Why fun comes first at under 9s', 'Thanking the volunteers who keep the club going'] },
     ],
     created_at: '2026-01-30T00:00:00Z',
   },
@@ -291,39 +308,28 @@ async function getWorkspaceByApiKey(apiKey) {
 
 // Build workspace-specific system prompt
 function buildWorkspaceSystemPrompt(workspace, selectedPillar) {
-  const config = workspace.brand_config || {};
-  const pillars = workspace.pillars || [];
-
-  const forbiddenText = config.forbidden_topics?.length
-    ? `\n\nNEVER discuss or reference: ${config.forbidden_topics.join(', ')}`
-    : '';
-
-  const pillarDetail = selectedPillar
-    ? pillars.find(p => p.name === selectedPillar || p.id === selectedPillar)
-    : null;
-
   if (workspace.slug === 'moonboots') {
     // Use the existing rich context system for MoonBoots
     return null; // signals caller to use getGenerationContext + buildSystemPrompt
   }
 
-  return `You are writing social media content for ${workspace.name}.
-${config.tagline ? `Brand: ${workspace.name} - "${config.tagline}"` : ''}
+  const config = workspace.brand_config || {};
+  const pillars = workspace.pillars || [];
+  const pillarDetail = findPillar(pillars, selectedPillar);
+  const list = (title, lines) => (lines?.length ? `\n\n${title}:\n${lines.map(line => `* ${line}`).join('\n')}` : '');
 
-VOICE AND TONE:
-${config.tone || 'Professional and engaging.'}
-${forbiddenText}
-
-CONTENT PILLARS:
-${pillars.map((p, i) => `${i + 1}. ${p.name}: ${p.description}${p.example_angles?.length ? ` (angles: ${p.example_angles.join(', ')})` : ''}`).join('\n')}
-
-CONTENT GUIDELINES:
-- Sound authentic and on-brand
-- Share genuine insights and perspectives
-- Use short paragraphs and line breaks for readability
-- Optimise for each platform's style and audience
-- Be practical and actionable
-${pillarDetail ? `\nCurrent content pillar focus: ${pillarDetail.name} - ${pillarDetail.description}` : ''}`;
+  // No dashes in this prompt: the model copies the punctuation it is shown
+  return `You are writing social media posts for ${workspace.name}${config.tagline ? `, "${config.tagline}"` : ''}.`
+    + (config.lead_message ? `\n\nWHAT ${workspace.name.toUpperCase()} DOES (the lead message):\n${config.lead_message}` : '')
+    + `\n\nVOICE AND TONE:\n${config.tone || 'Professional and engaging.'}`
+    + list('STYLE RULES', config.style_rules)
+    + list('NEVER CLAIM', config.never_claim)
+    + list('EXAMPLES AND NAMES', config.example_rules)
+    + (config.forbidden_topics?.length ? `\n\nNEVER discuss or reference: ${config.forbidden_topics.join(', ')}` : '')
+    + (config.register_link ? `\n\nWhen inviting people to sign up, link to ${config.register_link}. Tracking tags are added automatically, so do not add any.` : '')
+    + `\n\nCONTENT PILLARS:\n${pillars.map((p, i) => `${i + 1}. ${p.name}: ${p.description}${p.example_angles?.length ? ` Angles: ${p.example_angles.join('; ')}.` : ''}`).join('\n')}`
+    + '\n\nCONTENT GUIDELINES:\n* Sound authentic and on brand\n* Use short paragraphs and line breaks for readability\n* Suit each platform\'s style and audience\n* Be practical and specific'
+    + (pillarDetail ? `\n\nCurrent content pillar focus: ${pillarDetail.name}. ${pillarDetail.description}` : '');
 }
 
 // Workspace API key (Bearer) authentication for Touchline HQ / Marcus.

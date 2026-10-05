@@ -1816,7 +1816,7 @@ function StudioApp({ onLogout }) {
         // Use fallback workspaces if API fails
         setWorkspaces([
           { id: 'moonboots', name: 'MoonBoots', slug: 'moonboots', brand_config: { tagline: 'Strategy to Execution' }, pillars: [] },
-          { id: 'touchline', name: 'Touchline', slug: 'touchline', brand_config: { tagline: 'Empowering Grassroots Football' }, pillars: [] },
+          { id: 'touchline', name: 'Touchline', slug: 'touchline', brand_config: { tagline: 'The all-in-one grassroots football app' }, pillars: [] },
         ]);
       });
   }, []);
