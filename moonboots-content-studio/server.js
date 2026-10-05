@@ -68,14 +68,14 @@ function getDefaultContext() {
   return {
     profile: {
       about_me: 'Founder of MoonBoots Consultancy, a strategic advisory firm helping businesses cut through AI and Web3 hype with practical strategy that actually ships. Grassroots football coach. Dad of 3.',
-      background: 'Former enterprise consultant turned founder. Built multiple AI-powered products including Touchline (AI coaching platform). Deep experience bridging strategy to execution for startups and enterprise clients.',
+      background: 'Former enterprise consultant turned founder. Built multiple AI-powered products including Touchline (the all-in-one grassroots football app). Deep experience bridging strategy to execution for startups and enterprise clients.',
       tone_keywords: ['direct', 'conversational', 'no jargon', 'occasionally contrarian', 'uses analogies'],
       avoid_words: ['synergy', 'leverage', 'disrupt', 'Web3 native', 'paradigm shift', 'move the needle', 'circle back'],
       signature_phrases: ['clarity over hype', 'own vs rent your audience', 'strategy to execution', 'practical, not theoretical']
     },
     ventures: [
       { name: 'MoonBoots Consultancy', website: 'moonbootsconsultancy.net', description: 'Professional services and advisory arm delivering AI strategy, agentic AI development, business transformation and Web3 integration.', key_messages: ['Business enablement bridge', 'Hands-on implementation', 'AI strategy that ships'] },
-      { name: 'Touchline', website: 'touchline.xyz', description: 'AI-powered coaching platform for grassroots football coaches. Tactical analysis, training session generation, player development tools.', key_messages: ['AI for real coaches', 'Grassroots football deserves better tools'] },
+      { name: 'Touchline', website: 'touchline.xyz', description: "The all-in-one grassroots football app. What a manager says on the touchline (Voice Notes or typed notes) or films on a Sunday becomes notes on every player under the FA's four corners, then each child's development plan, with the coach confirming everything. Families see the plan in the Player Lounge.", key_messages: ['From touchline notes to every child\'s development plan', 'One app for the whole club', 'Parents are free'] },
       { name: 'Moments', website: null, description: 'White-label community platform for creators to own their audience relationships. Memberships, badges, gated content, live-streaming.', key_messages: ['Own your audience, dont rent it', 'Platform independence'] },
       { name: 'DeepFabrik', website: null, description: 'Modular Web3 tooling and blockchain solutions. Tokenization platforms, decentralized applications.', key_messages: ['Web3 infrastructure', 'Tokenization done right'] }
     ],
