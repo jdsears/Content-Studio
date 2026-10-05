@@ -7,6 +7,8 @@ export default defineConfig({
     port: 3000
   },
   preview: {
-    port: process.env.PORT || 3000
+    port: process.env.PORT || 3000,
+    host: true,
+    allowedHosts: ['content-studio-production-7662.up.railway.app', '.railway.app']
   }
 })
