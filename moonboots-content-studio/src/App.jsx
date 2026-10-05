@@ -16,7 +16,6 @@ const apiFetch = async (url, options = {}) => {
 };
 
 const CLAUDE_NOT_SET = 'Claude is not set up on the server yet. Add ANTHROPIC_API_KEY in Railway > Variables.';
-const REPLICATE_NOT_SET = 'Replicate is not set up on the server yet. Add REPLICATE_API_TOKEN in Railway > Variables.';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -262,52 +261,6 @@ const getNextTimeSlots = (platform, count = 5) => {
   return slots;
 };
 
-// Generate AI image using Claude + Replicate (Flux Schnell). Keys stay on the server.
-const generateAIImage = async (content, platform) => {
-  // Step 1: Generate optimized image prompt using Claude
-  let imagePrompt;
-  try {
-    const promptResponse = await apiFetch('/api/generate-image-prompt', {
-      method: 'POST',
-      body: JSON.stringify({
-        postContent: content,
-        platform,
-        style: 'modern professional, dark moody backgrounds'
-      }),
-    });
-
-    const promptData = await promptResponse.json();
-    if (!promptResponse.ok) {
-      throw new Error(promptData.error || 'Failed to generate image prompt');
-    }
-    imagePrompt = promptData.imagePrompt;
-  } catch (error) {
-    // Fallback to basic prompt if Claude fails
-    console.warn('Claude prompt generation failed, using fallback:', error);
-    const firstLine = content.split('\n')[0].trim().substring(0, 100);
-    imagePrompt = `Abstract minimalist professional artwork. Dark moody background with subtle gradients. Visual mood: ${firstLine}. No text, no words, no typography. Clean modern design.`;
-  }
-
-  // Step 2: Generate image using Replicate (Flux Schnell)
-  const aspectRatio = platform === 'instagram' ? 'portrait' : 'landscape';
-
-  const response = await apiFetch('/api/generate-image', {
-    method: 'POST',
-    body: JSON.stringify({
-      prompt: imagePrompt,
-      aspectRatio,
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to generate image');
-  }
-
-  return data.image || data.imageUrl;
-};
-
 // Template themes with colors
 const templateThemes = {
   midnight: { name: 'Midnight', gradient: ['#0f172a', '#1e3a5f'], accent: '#3b82f6' },
@@ -437,27 +390,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
       const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
 
       try {
-        let imageUrl;
-        if (imgSettings.type === 'ai') {
-          if (!serverConfig?.replicate) {
-            console.warn(`Replicate not configured on the server, using template for ${platform}`);
-            alert(`${REPLICATE_NOT_SET} Using template for ${platform} image.`);
-            imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
-          } else {
-            // AI image generation using Claude + Replicate
-            try {
-              imageUrl = await generateAIImage(content[platform], platform);
-            } catch (error) {
-              console.error(`AI image generation failed for ${platform}:`, error);
-              alert(`AI image generation failed for ${platform}: ${error.message}. Using template instead.`);
-              // Fall back to template on error
-              imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
-            }
-          }
-        } else {
-          // Template-based image generation
-          imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
-        }
+        const imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
 
         if (imageUrl) {
           setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
@@ -476,23 +409,11 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
     const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
 
-    if (imgSettings.type === 'ai' && serverConfig?.replicate) {
-      try {
-        const imageUrl = await generateAIImage(content, platform);
-        setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-      } catch (error) {
-        console.error(`AI image regeneration failed for ${platform}:`, error);
-        // Fall back to template on error
-        const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
-        setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-      }
-    } else {
-      try {
-        const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
-        setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
-      } catch (error) {
-        console.error(`Template image regeneration failed for ${platform}:`, error);
-      }
+    try {
+      const imageUrl = await generateTemplateImage(content, imgSettings.template, platform, imgSettings.theme);
+      setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
+    } catch (error) {
+      console.error(`Template image regeneration failed for ${platform}:`, error);
     }
     setGeneratingImages(prev => ({ ...prev, [platform]: false }));
   };
@@ -649,6 +570,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                   method: 'POST',
                   body: JSON.stringify({
                     pillar: activePillars.find(p => p.id === selectedPillar)?.name,
+                    workspaceId: workspace?.id,
                   }),
                 });
                 const data = await response.json();
@@ -704,7 +626,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                       className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200"
                     >
                       <span className="px-2 py-0.5 bg-slate-700/50 rounded">
-                        {imgSettings.enabled ? (imgSettings.type === 'ai' ? 'AI Image' : `${imgSettings.theme}`) : 'No image'}
+                        {imgSettings.enabled ? `${imgSettings.theme}` : 'No image'}
                       </span>
                       <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                     </button>
@@ -729,28 +651,6 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
 
                     {imgSettings.enabled && (
                       <>
-                        {/* Image type: Template vs AI */}
-                        <div>
-                          <span className="text-xs text-slate-400 block mb-2">Image type</span>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => updatePlatformImageSetting(platform, 'type', 'template')}
-                              className={`flex-1 px-3 py-2 text-xs rounded-lg border ${imgSettings.type === 'template' ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}
-                            >
-                              Template
-                            </button>
-                            <button
-                              onClick={() => updatePlatformImageSetting(platform, 'type', 'ai')}
-                              className={`flex-1 px-3 py-2 text-xs rounded-lg border ${imgSettings.type === 'ai' ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-slate-300 border-slate-700'}`}
-                            >
-                              AI Generated
-                            </button>
-                          </div>
-                          {imgSettings.type === 'ai' && !serverConfig?.replicate && (
-                            <p className="text-xs text-yellow-400 mt-1">AI images need REPLICATE_API_TOKEN set in Railway</p>
-                          )}
-                        </div>
-
                         {/* Template settings (shown when template type selected) */}
                         {imgSettings.type === 'template' && (
                           <>
@@ -816,8 +716,8 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                     <PlatformIcon platform={platform} className="w-4 h-4 text-slate-400" />
                     <span className="text-sm text-slate-300 capitalize">{platform === 'x' ? 'X (Manual)' : platform}</span>
                     {imgSettings.enabled && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${imgSettings.type === 'ai' ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-700/50 text-slate-400'}`}>
-                        {imgSettings.type === 'ai' ? 'AI Image' : `${templateThemes[imgSettings.theme]?.name || imgSettings.theme}`}
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">
+                        {templateThemes[imgSettings.theme]?.name || imgSettings.theme}
                       </span>
                     )}
                     {useOptimalTiming && selectedSlots[platform] && <span className="text-xs text-blue-400">→ {selectedSlots[platform].full}</span>}
@@ -834,7 +734,7 @@ const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, genera
                       {generatingImages[platform] ? (
                         <div className="w-32 h-32 bg-slate-700/50 rounded-lg flex flex-col items-center justify-center gap-2">
                           <div className="w-5 h-5 border-2 border-slate-500 border-t-white rounded-full animate-spin" />
-                          <span className="text-[10px] text-slate-500">{imgSettings.type === 'ai' ? 'AI generating...' : 'Creating...'}</span>
+                          <span className="text-[10px] text-slate-500">Creating...</span>
                         </div>
                       ) : generatedImages[platform] ? (
                         <div className="relative group cursor-pointer" onClick={() => setExpandedImage(generatedImages[platform])}>
@@ -1680,8 +1580,7 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
         <h3 className="text-sm font-medium text-slate-300 mb-4">AI Services</h3>
         <div className="space-y-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
           <ServerKeyRow label="Claude (content generation)" configured={serverConfig?.claude} envName="ANTHROPIC_API_KEY" />
-          <ServerKeyRow label="Replicate (AI images)" configured={serverConfig?.replicate} envName="REPLICATE_API_TOKEN" />
-          <p className="text-[10px] text-slate-500">These keys are stored in Railway and never sent to your browser.</p>
+          <p className="text-[10px] text-slate-500">This key is stored in Railway and never sent to your browser.</p>
         </div>
       </div>
 
@@ -1889,7 +1788,7 @@ const removeLegacySecretsFromBrowser = () => {
 function StudioApp({ onLogout }) {
   const [activeTab, setActiveTab] = useState('generate');
 
-  // What the server has configured (Claude, Replicate, storage). Never the keys themselves.
+  // What the server has configured (Claude, storage). Never the keys themselves.
   const [serverConfig, setServerConfig] = useState(null);
   useEffect(() => {
     apiFetch('/api/config')
