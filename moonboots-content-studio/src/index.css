@@ -2,15 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,100;9..40,200;9..40,300;9..40,400;9..40,500&display=swap');
+/* MoonBoots look (the default) */
+:root {
+  --bg: 2 6 23;
+  --surface: 15 23 42;
+  --raised: 30 41 59;
+  --line: 51 65 85;
+  --ink: 248 250 252;
+  --muted: 148 163 184;
+  --faint: 100 116 139;
+  --accent: 96 165 250;
+  --primary: 255 255 255;
+  --primary-ink: 15 23 42;
+  --font: 'DM Sans', system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+/* Touchline look: navy, green and Inter */
+[data-brand='touchline'] {
+  --bg: 8 17 31;
+  --surface: 13 26 46;
+  --raised: 22 38 64;
+  --line: 38 58 88;
+  --ink: 255 255 255;
+  --muted: 163 179 202;
+  --faint: 110 128 156;
+  --accent: 0 255 133;
+  --primary: 0 255 133;
+  --primary-ink: 8 17 31;
+  --font: 'Inter', system-ui, sans-serif;
+}
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #334155 transparent;
+  scrollbar-color: rgb(var(--line)) transparent;
 }
 
 ::selection {
-  background: rgba(148, 163, 184, 0.3);
+  background: rgb(var(--accent) / 0.3);
 }
 
 html {
@@ -18,5 +47,22 @@ html {
 }
 
 body {
-  font-family: 'DM Sans', sans-serif;
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keep page content clear of the phone's home indicator */
+.pb-safe {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-toast-in {
+  animation: toast-in 160ms ease-out;
 }
