@@ -45,6 +45,12 @@ test('keeps existing query strings and never overwrites UTM tags', () => {
   assert.equal(addUtmTags(tagged, { platform: 'x', pillar: 'clubs' }), tagged);
 });
 
+test('leaves subdomains and look-alike domains alone', () => {
+  for (const text of ['https://app.touchline.xyz/register', 'mytouchline.xyz/register', 'me@touchline.xyz/register']) {
+    assert.equal(addUtmTags(text, { platform: 'x', pillar: 'clubs' }), text);
+  }
+});
+
 test('leaves other links alone', () => {
   const text = 'Read more at touchline.xyz/blog and moonbootsconsultancy.net';
   assert.equal(addUtmTags(text, { platform: 'x' }), text);

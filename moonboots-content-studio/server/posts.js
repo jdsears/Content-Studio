@@ -24,8 +24,15 @@ const RETRY_EVERY_MS = 5 * MINUTE;
 const GIVE_UP_AFTER_MS = 24 * HOUR;
 const LINK_WAIT_MS = 6 * HOUR;
 
+const DEDUPE_MS = 15 * MINUTE;
+const STALE_SEND_MS = 2 * MINUTE;
+const MAX_PAGES = 5;
+
 // Problems that retrying will not fix
 const PERMANENT_ERRORS = new Set(['job_failed', 'publer_error']);
+
+// Failures where Publer may already have the post, so "Try again" asks first
+const MAYBE_IN_PUBLER = new Set(['timeout', 'restarted', 'unconfirmed']);
 
 export class PostError extends Error {
   constructor(message, status = 400) {
@@ -72,6 +79,15 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     return saved;
   }
 
+  // Apply changes to the stored post, but only if its status is still one we expect.
+  // This stops a slow Publer call from undoing a cancel made in the meantime.
+  async function update(postId, expectedStatuses, changes) {
+    const current = await get(postId);
+    if (!current) return null;
+    if (expectedStatuses && !expectedStatuses.includes(current.status)) return current;
+    return save({ ...current, ...changes });
+  }
+
   async function remove(id) {
     await store.remove(COLLECTION, id);
   }
@@ -92,12 +108,26 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     return post;
   }
 
+  // Slots handed out in the last few minutes, so two posts arriving together don't share one
+  const reservedSlots = new Map();
+
   // Next free slot from the workspace's posting times (UK time), skipping slots already used
   async function nextSlotFor(workspace, platform) {
+    const key = `${workspace.id}:${platform}`;
+    const now = Date.now();
+    const reserved = reservedSlots.get(key) || new Map();
+    for (const [iso, until] of reserved) if (until < now) reserved.delete(iso);
+
     const posts = await list({ workspaceId: workspace.id, platform });
-    const taken = posts.filter(p => ['queued', 'scheduled'].includes(p.status) && p.scheduled_for).map(p => p.scheduled_for);
-    const slot = nextPostingSlot(workspace.brand_config?.posting_frequency?.[platform], { taken });
-    return slot || new Date(Date.now() + 15 * MINUTE);
+    const taken = posts
+      .filter(p => p.scheduled_for && (p.status === 'scheduled' || (p.status === 'queued' && p.auto_schedule)))
+      .map(p => p.scheduled_for);
+    const slot = nextPostingSlot(workspace.brand_config?.posting_frequency?.[platform], { taken: [...taken, ...reserved.keys()] })
+      || new Date(now + 15 * MINUTE);
+
+    reserved.set(slot.toISOString(), now + 10 * MINUTE);
+    reservedSlots.set(key, reserved);
+    return slot;
   }
 
   // ---------- Publer ----------
@@ -115,145 +145,198 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     return { from: isoShift(iso, -24 * HOUR), to: isoShift(iso, 24 * HOUR) };
   }
 
-  async function sendToPubler(post) {
-    const workspace = await getWorkspaceById(post.workspace_id);
-    if (!workspace) throw new PostError('Workspace not found', 404);
-    const { apiKey, publerWorkspaceId, platformAccounts } = await publerContext(workspace);
+  // Publer ids already linked to other posts, so a lookup never takes another post's id
+  async function usedPublerIds(post) {
+    const posts = await list({ workspaceId: post.workspace_id });
+    return new Set(posts.filter(p => p.id !== post.id && p.publer_post_id).map(p => String(p.publer_post_id)));
+  }
 
-    const accountId = await publer.resolveAccountId(apiKey, publerWorkspaceId, post.platform, platformAccounts[post.platform]);
-    const mediaId = await publer.uploadMedia(apiKey, publerWorkspaceId, post.image);
-    const text = prepareForPublishing(workspace, post);
-    const { jobId, scheduledAt } = await publer.schedulePost(apiKey, publerWorkspaceId, {
-      accountId, platform: post.platform, text, mediaId, scheduledAt: post.scheduled_for,
-    });
+  // Find this post among Publer's posts in one state, reading a few pages
+  async function findInPubler(ctx, post, state) {
+    const around = post.scheduled_for || post.created_at;
+    const excludeIds = await usedPublerIds(post);
+    const seen = new Set();
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const posts = await publer.listPosts(ctx.apiKey, ctx.publerWorkspaceId, {
+        state, accountId: post.publer_account_id, ...searchWindow(around), page,
+      });
+      const fresh = posts.filter(p => !seen.has(String(p.id)));
+      if (!fresh.length) break;
+      fresh.forEach(p => seen.add(String(p.id)));
+      const match = publer.findMatchingPost(fresh, {
+        publerPostId: post.publer_post_id,
+        text: post.published_text || post.content,
+        accountId: post.publer_account_id,
+        around,
+        excludeIds,
+      });
+      if (match) return match;
+    }
+    return null;
+  }
 
-    const job = await publer.waitForJob(apiKey, publerWorkspaceId, jobId);
-    if (job.failed) throw new PublerError(job.error, { status: 400, code: 'job_failed' });
-
-    // Publer's job gives no post id, so look the post up (best effort; checked again later)
-    let publerPostId = null;
+  async function withdrawFromPubler(post, ctx) {
     try {
-      const scheduled = await publer.listPosts(apiKey, publerWorkspaceId, { state: 'scheduled', accountId, ...searchWindow(scheduledAt) });
-      const match = publer.findMatchingPost(scheduled, { text, accountId });
-      if (match?.id) publerPostId = String(match.id);
+      const match = post.publer_post_id ? { id: post.publer_post_id } : await findInPubler(ctx, post, 'scheduled');
+      if (!match?.id) throw new Error('not found in Publer');
+      await publer.deletePosts(ctx.apiKey, ctx.publerWorkspaceId, [String(match.id)]);
+      return update(post.id, ['cancelled'], { publer_post_id: String(match.id) });
+    } catch (error) {
+      console.error(`[posts] ${post.id} was cancelled while being scheduled and could not be removed from Publer:`, error.message);
+      return update(post.id, ['cancelled'], { error: 'Cancelled while it was being sent to Publer. Check Publer and delete it there if it is still scheduled.' });
+    }
+  }
+
+  async function recordFailure(post, attempt, error) {
+    const tooOld = Date.now() - new Date(post.retry_from || post.created_at).getTime() > GIVE_UP_AFTER_MS;
+    const failed = PERMANENT_ERRORS.has(error.code) || MAYBE_IN_PUBLER.has(error.code) || tooOld || error instanceof PostError;
+    console.error(`[posts] ${post.id} not scheduled (${failed ? 'failed' : 'will retry'}):`, error.message);
+    return update(post.id, ['queued'], {
+      ...attempt,
+      status: failed ? 'failed' : 'queued',
+      error: error.code === 'timeout'
+        ? "Publer didn't answer in time, so it may or may not have this post. Check Publer before trying again."
+        : error.message,
+      error_code: error.code || null,
+      sending_since: null,
+    });
+  }
+
+  // Posts being sent right now (one server, so memory is enough)
+  const inFlight = new Set();
+
+  // Hand a queued post to Publer. Works from the stored copy, and never sends a post twice.
+  async function submit(postId) {
+    if (inFlight.has(postId)) return get(postId);
+    inFlight.add(postId);
+    try {
+      return await submitNow(postId);
+    } finally {
+      inFlight.delete(postId);
+    }
+  }
+
+  async function submitNow(postId) {
+    const post = await get(postId);
+    if (!post || post.status !== 'queued') return post;
+    const attempt = { attempts: (post.attempts || 0) + 1, last_attempt_at: nowIso() };
+
+    // Get everything ready. Nothing has reached Publer yet, so failures here can be retried.
+    let ctx, accountId, mediaId, text;
+    try {
+      const workspace = await getWorkspaceById(post.workspace_id);
+      if (!workspace) throw new PostError('Workspace not found', 404);
+      if (typeof post.content !== 'string' || !post.content.trim()) throw new PostError('This post has no text.');
+      ctx = await publerContext(workspace);
+      accountId = await publer.resolveAccountId(ctx.apiKey, ctx.publerWorkspaceId, post.platform, ctx.platformAccounts[post.platform]);
+      mediaId = await publer.uploadMedia(ctx.apiKey, ctx.publerWorkspaceId, post.image);
+      text = prepareForPublishing(workspace, post);
+    } catch (error) {
+      return recordFailure(post, attempt, error);
+    }
+
+    // Mark it as on its way, so a restart part way through can't send it twice
+    const marked = await update(post.id, ['queued'], { ...attempt, sending_since: nowIso() });
+    if (marked?.status !== 'queued') return marked;
+
+    let sent;
+    try {
+      sent = await publer.schedulePost(ctx.apiKey, ctx.publerWorkspaceId, {
+        accountId, platform: post.platform, text, mediaId, scheduledAt: post.scheduled_for,
+      });
+    } catch (error) {
+      return recordFailure(post, attempt, error);
+    }
+
+    // Publer has it. Record that straight away; if it was cancelled meanwhile, take it back out.
+    const latest = await get(post.id);
+    const accepted = {
+      scheduled_for: sent.scheduledAt,
+      publer_job_id: sent.jobId,
+      publer_account_id: accountId,
+      published_text: text,
+      sending_since: null,
+    };
+    if (latest?.status === 'cancelled') {
+      const cancelled = await update(post.id, ['cancelled'], accepted);
+      return withdrawFromPubler(cancelled, ctx);
+    }
+    let current = await update(post.id, ['queued'], { ...accepted, status: 'scheduled', error: null, error_code: null });
+    if (current?.status !== 'scheduled') return current;
+    console.log(`[posts] ${post.id} scheduled in Publer for ${sent.scheduledAt}`);
+
+    // Confirm it. Publer reports account problems as job "failures".
+    let job;
+    try {
+      job = await publer.waitForJob(ctx.apiKey, ctx.publerWorkspaceId, sent.jobId);
+    } catch (error) {
+      job = { done: false, error: error.message };
+    }
+    if (job.failed) {
+      return update(post.id, ['scheduled'], { status: 'failed', error: job.error, error_code: 'job_failed' });
+    }
+
+    // Publer's job gives no post id, so look the post up (checked again later if not found)
+    try {
+      const match = await findInPubler(ctx, current, 'scheduled');
+      if (match?.id) current = await update(post.id, ['scheduled'], { publer_post_id: String(match.id) });
     } catch (error) {
       console.error(`[posts] Could not look up Publer post for ${post.id}:`, error.message);
     }
-
-    return { jobId, scheduledAt, accountId, publerPostId, text };
-  }
-
-  async function withdrawFromPubler(post, sent) {
-    try {
-      const workspace = await getWorkspaceById(post.workspace_id);
-      const ctx = await publerContext(workspace);
-      let publerPostId = sent.publerPostId;
-      if (!publerPostId) {
-        const scheduled = await publer.listPosts(ctx.apiKey, ctx.publerWorkspaceId, { state: 'scheduled', accountId: sent.accountId, ...searchWindow(sent.scheduledAt) });
-        publerPostId = publer.findMatchingPost(scheduled, { text: sent.text, accountId: sent.accountId })?.id;
-      }
-      if (!publerPostId) throw new Error('not found in Publer');
-      await publer.deletePosts(ctx.apiKey, ctx.publerWorkspaceId, [String(publerPostId)]);
-      return post;
-    } catch (error) {
-      console.error(`[posts] ${post.id} was cancelled while being scheduled and could not be removed from Publer:`, error.message);
-      return save({ ...post, error: 'Cancelled while it was being sent to Publer. Check Publer and delete it there if it is still scheduled.' });
-    }
-  }
-
-  // Hand a post to Publer. Temporary problems leave it queued for the next retry.
-  async function submit(post) {
-    const attempt = { attempts: (post.attempts || 0) + 1, last_attempt_at: nowIso() };
-    try {
-      const sent = await sendToPubler(post);
-
-      // Cancelled while it was on its way to Publer: take it back out
-      const latest = await get(post.id);
-      if (latest?.status === 'cancelled') return withdrawFromPubler(latest, sent);
-
-      console.log(`[posts] ${post.id} scheduled in Publer for ${sent.scheduledAt}`);
-      return save({
-        ...post,
-        ...attempt,
-        status: 'scheduled',
-        scheduled_for: sent.scheduledAt,
-        publer_job_id: sent.jobId,
-        publer_account_id: sent.accountId,
-        publer_post_id: sent.publerPostId,
-        published_text: sent.text,
-        error: null,
-        error_code: null,
-      });
-    } catch (error) {
-      const tooOld = Date.now() - new Date(post.retry_from || post.created_at).getTime() > GIVE_UP_AFTER_MS;
-      const failed = PERMANENT_ERRORS.has(error.code) || tooOld || error instanceof PostError;
-      console.error(`[posts] ${post.id} not scheduled (${failed ? 'failed' : 'will retry'}):`, error.message);
-      return save({
-        ...post,
-        ...attempt,
-        status: failed ? 'failed' : 'queued',
-        error: error.message,
-        error_code: error.code || null,
-      });
-    }
+    return current;
   }
 
   // Ask Publer whether a scheduled post has gone live, and fetch its link
-  async function checkLive(post) {
+  async function checkLive(postId) {
+    const post = await get(postId);
+    if (!post || !['scheduled', 'published'].includes(post.status)) return post;
     const workspace = await getWorkspaceById(post.workspace_id);
     if (!workspace) return post;
+
     const checked = { last_checked_at: nowIso() };
+    const overdue = post.status === 'scheduled' && Date.now() - new Date(post.scheduled_for).getTime() > GIVE_UP_AFTER_MS;
+    const giveUp = () => update(post.id, ['scheduled'], {
+      ...checked,
+      status: 'failed',
+      error_code: 'unconfirmed',
+      error: 'Publer has not confirmed this post went live after 24 hours. Check it in Publer.',
+    });
 
-    let ctx;
     try {
-      ctx = await publerContext(workspace);
-    } catch (error) {
-      return save({ ...post, ...checked, error: error.message });
-    }
-
-    const window = searchWindow(post.scheduled_for || post.created_at);
-    const lookup = {
-      publerPostId: post.publer_post_id,
-      text: post.published_text || post.content,
-      accountId: post.publer_account_id,
-    };
-
-    for (const state of ['published', 'published_posted']) {
-      let posts;
-      try {
-        posts = await publer.listPosts(ctx.apiKey, ctx.publerWorkspaceId, { state, accountId: post.publer_account_id, ...window });
-      } catch (error) {
-        return save({ ...post, ...checked, error: error.message });
-      }
-      const match = publer.findMatchingPost(posts, lookup);
-      if (match) {
-        return save({
-          ...post,
-          ...checked,
-          status: 'published',
-          published_at: post.published_at || match.published_at || match.scheduled_at || post.scheduled_for,
-          post_url: match.post_link || post.post_url || null,
-          publer_post_id: match.id ? String(match.id) : post.publer_post_id,
-          error: null,
-        });
-      }
-    }
-
-    if (post.status === 'scheduled') {
-      try {
-        const failedPosts = await publer.listPosts(ctx.apiKey, ctx.publerWorkspaceId, { state: 'failed', accountId: post.publer_account_id, ...window });
-        const failedMatch = publer.findMatchingPost(failedPosts, lookup);
-        if (failedMatch) {
-          return save({ ...post, ...checked, status: 'failed', error: failedMatch.error || 'Publer could not publish this post. Check it in Publer.' });
+      const ctx = await publerContext(workspace);
+      for (const state of ['published', 'published_posted']) {
+        const match = await findInPubler(ctx, post, state);
+        if (match) {
+          return update(post.id, ['scheduled', 'published'], {
+            ...checked,
+            status: 'published',
+            published_at: post.published_at || match.published_at || match.scheduled_at || post.scheduled_for,
+            post_url: match.post_link || post.post_url || null,
+            publer_post_id: String(match.id),
+            error: null,
+            error_code: null,
+          });
         }
-      } catch {}
-
-      if (Date.now() - new Date(post.scheduled_for).getTime() > GIVE_UP_AFTER_MS) {
-        return save({ ...post, ...checked, status: 'failed', error: 'Publer has not confirmed this post went live after 24 hours. Check it in Publer.' });
       }
+      if (post.status === 'scheduled') {
+        const failedMatch = await findInPubler(ctx, post, 'failed');
+        if (failedMatch) {
+          return update(post.id, ['scheduled'], {
+            ...checked,
+            status: 'failed',
+            publer_post_id: String(failedMatch.id),
+            error: failedMatch.error || 'Publer could not publish this post. Check it in Publer.',
+            error_code: 'job_failed',
+          });
+        }
+      }
+    } catch (error) {
+      if (overdue) return giveUp();
+      return update(post.id, null, { ...checked, error: error.message });
     }
 
-    return save({ ...post, ...checked });
+    if (overdue) return giveUp();
+    return update(post.id, null, { ...checked, error: null });
   }
 
   // ---------- Actions ----------
@@ -268,6 +351,17 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     if (typeof content !== 'string' || !content.trim()) {
       throw new PostError('content is required');
     }
+
+    // The same post sent again within a few minutes (e.g. a retried request) is not posted twice
+    const requested = scheduleFor ? String(scheduleFor) : null;
+    const duplicate = (await list({ workspaceId: workspace.id, platform })).find(p =>
+      p.auto_schedule
+      && p.content === content
+      && (p.source || 'api') === (source || 'api')
+      && (p.requested_schedule || null) === requested
+      && !['cancelled', 'failed'].includes(p.status)
+      && Date.now() - new Date(p.created_at).getTime() < DEDUPE_MS);
+    if (duplicate) return duplicate;
 
     let scheduledFor;
     if (scheduleFor) {
@@ -292,6 +386,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       auto_schedule: true,
       status: 'queued',
       scheduled_for: scheduledFor.toISOString(),
+      requested_schedule: requested,
       created_at: nowIso(),
     };
 
@@ -306,7 +401,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
 
     post = await save(post);
     console.log(`[posts] ${post.id} received from ${post.source} for ${workspace.name} on ${platform}`);
-    return submit(post);
+    return submit(post.id);
   }
 
   // A post saved for approval in Content Studio (v1 API)
@@ -322,18 +417,49 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
 
   async function approve(workspace, postId) {
     const post = await getForWorkspace(workspace.id, postId);
-    if (!['pending', 'queued'].includes(post.status)) throw new PostError(`This post is already ${post.status}.`);
+    if (!['pending', 'queued'].includes(post.status) || post.auto_schedule) {
+      throw new PostError(`This post is already ${post.status === 'queued' ? 'on its way to Publer' : post.status}.`);
+    }
     const scheduledFor = post.scheduled_for && new Date(post.scheduled_for) > new Date()
       ? post.scheduled_for
       : (await nextSlotFor(workspace, post.platform)).toISOString();
-    return submit({ ...post, auto_schedule: true, status: 'queued', scheduled_for: scheduledFor, retry_from: nowIso() });
+    await update(post.id, ['pending', 'queued'], {
+      auto_schedule: true, status: 'queued', scheduled_for: scheduledFor, retry_from: nowIso(),
+    });
+    return submit(post.id);
   }
 
-  async function retry(workspace, postId) {
+  async function retry(workspace, postId, { force = false } = {}) {
     const post = await getForWorkspace(workspace.id, postId);
     if (!['queued', 'failed'].includes(post.status)) throw new PostError(`This post is ${post.status}, so there is nothing to retry.`);
+    if (inFlight.has(post.id)) throw new PostError('This post is being sent to Publer right now.', 409);
+    if (MAYBE_IN_PUBLER.has(post.error_code) && !force) {
+      throw new PostError('Publer may already have this post. Check Publer first; if it is not there, send it again.', 409);
+    }
+
+    // Remove the earlier copy from Publer if it is still there
+    if (post.publer_post_id) {
+      try {
+        const ctx = await publerContext(workspace);
+        await publer.deletePosts(ctx.apiKey, ctx.publerWorkspaceId, [String(post.publer_post_id)]);
+      } catch (error) {
+        console.error(`[posts] Could not remove the earlier Publer copy of ${post.id}:`, error.message);
+      }
+    }
+
     const scheduledFor = new Date(post.scheduled_for) > new Date() ? post.scheduled_for : new Date(Date.now() + 5 * MINUTE).toISOString();
-    return submit({ ...post, auto_schedule: true, status: 'queued', scheduled_for: scheduledFor, retry_from: nowIso() });
+    await update(post.id, ['queued', 'failed'], {
+      auto_schedule: true,
+      status: 'queued',
+      scheduled_for: scheduledFor,
+      retry_from: nowIso(),
+      publer_post_id: null,
+      publer_job_id: null,
+      sending_since: null,
+      error: null,
+      error_code: null,
+    });
+    return submit(post.id);
   }
 
   // Cancel a post. A scheduled post is deleted from Publer first so it can't go out.
@@ -344,20 +470,15 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
 
     if (post.status === 'scheduled' && !force) {
       const ctx = await publerContext(workspace);
-      let publerPostId = post.publer_post_id;
-      if (!publerPostId) {
-        const scheduled = await publer.listPosts(ctx.apiKey, ctx.publerWorkspaceId, {
-          state: 'scheduled', accountId: post.publer_account_id, ...searchWindow(post.scheduled_for),
-        });
-        publerPostId = publer.findMatchingPost(scheduled, { text: post.published_text || post.content, accountId: post.publer_account_id })?.id;
-      }
-      if (!publerPostId) {
+      const match = post.publer_post_id ? { id: post.publer_post_id } : await findInPubler(ctx, post, 'scheduled');
+      if (!match?.id) {
         throw new PostError("Couldn't find this post in Publer, so it may still go out. Delete it in Publer, then mark it cancelled here.", 409);
       }
-      await publer.deletePosts(ctx.apiKey, ctx.publerWorkspaceId, [String(publerPostId)]);
+      await publer.deletePosts(ctx.apiKey, ctx.publerWorkspaceId, [String(match.id)]);
     }
 
-    return save({ ...post, status: 'cancelled', cancelled_at: nowIso(), error: null });
+    // A post on its way to Publer right now is taken back out by submit() once Publer has it
+    return update(post.id, null, { status: 'cancelled', cancelled_at: nowIso(), error: null });
   }
 
   // ---------- Background checks ----------
@@ -370,13 +491,22 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       const now = Date.now();
       const since = iso => (iso ? now - new Date(iso).getTime() : Infinity);
       for (const post of await list()) {
+        if (inFlight.has(post.id)) continue;
         try {
-          if (post.status === 'queued' && post.auto_schedule && since(post.last_attempt_at) >= RETRY_EVERY_MS) {
-            await submit(post);
+          if (post.status === 'queued' && post.auto_schedule && post.sending_since && since(post.sending_since) >= STALE_SEND_MS) {
+            // The server stopped while sending this post, so Publer may or may not have it
+            await update(post.id, ['queued'], {
+              status: 'failed',
+              sending_since: null,
+              error_code: 'restarted',
+              error: 'Content Studio restarted while sending this post. Check Publer, then send it again if it is not there.',
+            });
+          } else if (post.status === 'queued' && post.auto_schedule && !post.sending_since && since(post.last_attempt_at) >= RETRY_EVERY_MS) {
+            await submit(post.id);
           } else if (post.status === 'scheduled' && new Date(post.scheduled_for).getTime() <= now - MINUTE && since(post.last_checked_at) >= RETRY_EVERY_MS) {
-            await checkLive(post);
+            await checkLive(post.id);
           } else if (post.status === 'published' && !post.post_url && since(post.published_at) <= LINK_WAIT_MS && since(post.last_checked_at) >= 2 * RETRY_EVERY_MS) {
-            await checkLive(post);
+            await checkLive(post.id);
           }
         } catch (error) {
           console.error(`[posts] Check failed for ${post.id}:`, error.message);
@@ -395,7 +525,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
   }
 
   return {
-    get, save, remove, list, getForWorkspace, nextSlotFor,
+    get, save, update, remove, list, getForWorkspace, nextSlotFor,
     createScheduledPost, createDraft, approve, retry, cancel,
     submit, checkLive, runChecks, startScheduler,
   };

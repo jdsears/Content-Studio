@@ -116,11 +116,11 @@ test('a post only counts as published once Publer reports it live', async () => 
 
   // Its time has passed but Publer has not published it yet
   post = await service.save({ ...post, scheduled_for: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
-  post = await service.checkLive(post);
+  post = await service.checkLive(post.id);
   assert.equal(post.status, 'scheduled');
 
   fake.goLive(post.publer_post_id);
-  post = await service.checkLive(post);
+  post = await service.checkLive(post.id);
   assert.equal(post.status, 'published');
   assert.ok(post.published_at);
 

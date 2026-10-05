@@ -14,6 +14,10 @@ export async function startFakePubler() {
     scheduleCalls: [],
     deleted: [],
     media: 0,
+    // Switches for tests
+    scheduleDelayMs: 0,
+    scheduleStatus: null,   // e.g. 503: /posts/schedule answers with this error
+    jobStatusCode: null,    // e.g. 429: /job_status answers with this error
   };
   let nextId = 1;
 
@@ -38,22 +42,17 @@ export async function startFakePubler() {
       }
       if (req.method === 'POST' && path === '/posts/schedule') {
         const body = JSON.parse(raw);
-        state.scheduleCalls.push(body);
-        const item = body.bulk.posts[0];
-        const network = Object.keys(item.networks)[0];
-        const text = item.networks[network].text;
-        const jobId = `job_${nextId++}`;
-        if (text.includes('FAILME')) {
-          state.jobs.set(jobId, { status: 'complete', payload: { failures: { acc: [{ message: 'Text is too long for this network' }] } } });
-        } else {
-          const id = `pub_${nextId++}`;
-          state.posts.push({ id, account_id: item.accounts[0].id, text, state: 'scheduled', scheduled_at: item.accounts[0].scheduled_at, post_link: null });
-          state.jobs.set(jobId, { status: 'complete', payload: { failures: {} } });
-        }
-        return send(200, { job_id: jobId });
+        const answer = () => {
+          if (state.scheduleStatus) return send(state.scheduleStatus, { message: 'Publer is unavailable' });
+          scheduleNow(body);
+        };
+        return state.scheduleDelayMs ? setTimeout(answer, state.scheduleDelayMs) : answer();
       }
       const job = path.match(/^\/job_status\/(.+)$/);
-      if (req.method === 'GET' && job) return send(200, state.jobs.get(job[1]) || { status: 'working' });
+      if (req.method === 'GET' && job) {
+        if (state.jobStatusCode) return send(state.jobStatusCode, { message: 'Too many requests' });
+        return send(200, state.jobs.get(job[1]) || { status: 'working' });
+      }
       if (req.method === 'GET' && path === '/posts') {
         const wanted = url.searchParams.get('state');
         const accountIds = url.searchParams.getAll('account_ids[]');
@@ -67,6 +66,22 @@ export async function startFakePubler() {
         return send(200, { deleted_ids: ids });
       }
       send(404, { message: `No fake for ${req.method} ${path}` });
+
+      function scheduleNow(body) {
+        state.scheduleCalls.push(body);
+        const item = body.bulk.posts[0];
+        const network = Object.keys(item.networks)[0];
+        const text = item.networks[network].text;
+        const jobId = `job_${nextId++}`;
+        if (text.includes('FAILME')) {
+          state.jobs.set(jobId, { status: 'complete', payload: { failures: { acc: [{ message: 'Text is too long for this network' }] } } });
+        } else {
+          const id = `pub_${nextId++}`;
+          state.posts.push({ id, account_id: item.accounts[0].id, text, state: 'scheduled', scheduled_at: item.accounts[0].scheduled_at, post_link: null });
+          state.jobs.set(jobId, { status: 'complete', payload: { failures: {} } });
+        }
+        send(200, { job_id: jobId });
+      }
     });
   });
 
@@ -74,6 +89,10 @@ export async function startFakePubler() {
   return {
     state,
     url: `http://127.0.0.1:${server.address().port}/api/v1`,
+    // Pretend Publer has failed a post
+    fail(publerId) {
+      state.posts.find(p => p.id === publerId).state = 'failed';
+    },
     // Pretend Publer has published a post
     goLive(publerId) {
       const post = state.posts.find(p => p.id === publerId);

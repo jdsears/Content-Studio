@@ -52,7 +52,8 @@ export function pillarSlug(pillar, pillars = []) {
   return value.toLowerCase().replace(/&/g, ' ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'general';
 }
 
-const REGISTER_LINK = /(https?:\/\/)?(www\.)?touchline\.xyz\/register\b([^\s<>"')\]]*)/gi;
+// Only touchline.xyz or www.touchline.xyz, not app.touchline.xyz or mytouchline.xyz
+const REGISTER_LINK = /(?<![\w.@/-])(https?:\/\/)?(www\.)?touchline\.xyz\/register\b([^\s<>"')\]]*)/gi;
 
 // Add UTM tags to touchline.xyz/register links that have none. Existing UTM tags are never changed.
 export function addUtmTags(text, { platform, pillar, pillars = [] } = {}) {

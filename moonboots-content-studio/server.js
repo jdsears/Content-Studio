@@ -1221,6 +1221,11 @@ app.post('/api/v1/content/submit', async (req, res) => {
   const contentMap = typeof content === 'string'
     ? Object.fromEntries(enabledPlatforms.map(p => [p, content]))
     : content;
+  const textFor = (platform) => contentMap?.[platform] || contentMap?.[enabledPlatforms[0]];
+  const missing = enabledPlatforms.filter(p => typeof textFor(p) !== 'string' || !textFor(p).trim());
+  if (missing.length) {
+    return res.status(400).json({ error: `content has no text for: ${missing.join(', ')}` });
+  }
 
   try {
     const scheduledTimes = await scheduleTimes(workspace, enabledPlatforms, schedule);
@@ -1228,7 +1233,7 @@ app.post('/api/v1/content/submit', async (req, res) => {
     for (const platform of enabledPlatforms) {
       posts.push(await postService.createDraft(workspace, {
         platform,
-        content: contentMap[platform] || contentMap[enabledPlatforms[0]],
+        content: textFor(platform),
         image: image_url || null,
         source: 'api-v1',
         status: approval_required ? 'pending' : 'queued',

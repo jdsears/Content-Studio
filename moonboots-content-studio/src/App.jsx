@@ -1554,7 +1554,7 @@ const CalendarView = ({ posts, serverPosts = [] }) => {
         {monthItems.length === 0 ? <p className="text-sm text-slate-500">No posts this month</p> : monthItems.map(item => (
           <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg mb-2">
             <PlatformIcon platform={item.platform} className="w-4 h-4 text-slate-400" />
-            <p className="text-sm text-slate-300 truncate flex-1">{item.content.substring(0, 60)}{item.content.length > 60 ? '...' : ''}</p>
+            <p className="text-sm text-slate-300 truncate flex-1">{(item.content || '').substring(0, 60)}{(item.content || '').length > 60 ? '...' : ''}</p>
             {item.fromHq && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300">Marcus</span>}
             {item.image && <div className="w-8 h-8 rounded overflow-hidden flex-shrink-0"><img src={item.image} alt="" className="w-full h-full object-cover" /></div>}
             <span className="text-xs text-slate-500 whitespace-nowrap">{formatWhen(item.when)}</span>
@@ -2231,17 +2231,23 @@ function StudioApp({ onLogout }) {
   const [serverPosts, setServerPosts] = useState([]);
   const [serverPostsState, setServerPostsState] = useState({ loading: false, error: null });
 
+  // The workspace being shown, so a slow reply for another workspace is ignored
+  const shownWorkspace = React.useRef(activeWorkspace);
+  shownWorkspace.current = activeWorkspace;
+
   const loadServerPosts = useCallback(async () => {
     if (!activeWorkspace) return;
+    const workspaceId = activeWorkspace;
     setServerPostsState(prev => ({ ...prev, loading: true }));
     try {
-      const response = await apiFetch(`/api/workspaces/${activeWorkspace}/posts`);
+      const response = await apiFetch(`/api/workspaces/${workspaceId}/posts`);
       const data = await response.json();
+      if (shownWorkspace.current !== workspaceId) return;
       if (!response.ok) throw new Error(data.error || 'Failed to load posts');
       setServerPosts(data.posts || []);
       setServerPostsState({ loading: false, error: null });
     } catch (error) {
-      setServerPostsState({ loading: false, error: error.message });
+      if (shownWorkspace.current === workspaceId) setServerPostsState({ loading: false, error: error.message });
     }
   }, [activeWorkspace]);
 
@@ -2264,8 +2270,9 @@ function StudioApp({ onLogout }) {
       body: JSON.stringify({ force }),
     });
     const data = await response.json().catch(() => ({}));
-    if (response.status === 409 && action === 'cancel' && !force) {
-      if (window.confirm(`${data.error}\n\nMark it cancelled here anyway?`)) {
+    if (response.status === 409 && !force && (action === 'cancel' || action === 'retry')) {
+      const question = action === 'cancel' ? 'Mark it cancelled here anyway?' : 'Send it to Publer again anyway?';
+      if (window.confirm(`${data.error}\n\n${question}`)) {
         return handleServerPostAction(post, action, true);
       }
     } else if (!response.ok) {

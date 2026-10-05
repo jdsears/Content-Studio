@@ -113,6 +113,14 @@ test('GET /api/posts and /api/v1 need a valid key', async () => {
   assert.equal((await api('/api/v1/content/queue', { auth: TOUCHLINE_KEY })).status, 200);
 });
 
+test('v1 submit refuses a platform with no text', async () => {
+  const res = await api('/api/v1/content/submit', {
+    method: 'POST', auth: TOUCHLINE_KEY, body: { platforms: ['linkedin'], content: { facebook: 'Only Facebook text' } },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /no text for: linkedin/);
+});
+
 test('wrong password is refused, right password sets a secure session cookie', async () => {
   const wrong = await api('/api/auth/login', { method: 'POST', body: { password: 'nope' } });
   assert.equal(wrong.status, 401);

@@ -71,6 +71,10 @@ async function request(apiKey, path, { method = 'GET', workspaceId, body, query,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
+    // A timeout means Publer may have received the request; a connection failure means it did not
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+      throw new PublerError("Publer didn't answer in time.", { status: 504, code: 'timeout' });
+    }
     throw new PublerError(`Could not reach Publer: ${error.message}`, { status: 502, code: 'network' });
   }
 
@@ -239,7 +243,7 @@ export async function waitForJob(apiKey, publerWorkspaceId, jobId, { attempts = 
     try {
       result = await request(apiKey, `/job_status/${jobId}`, { workspaceId: publerWorkspaceId });
     } catch (error) {
-      if (error.code === 'network' || error.code === 'publer_down') continue;
+      if (['network', 'timeout', 'publer_down', 'rate_limited', 'bad_response'].includes(error.code)) continue;
       throw error;
     }
     const status = String(result?.status || '').toLowerCase();
@@ -272,18 +276,25 @@ export async function deletePosts(apiKey, publerWorkspaceId, postIds) {
   });
 }
 
-const firstWords = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase();
+// Text compared without links (Publer may shorten them) or spacing differences
+const comparable = (text) => String(text || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const postTime = (p) => p.scheduled_at || p.published_at || p.date || null;
+const TIME_TOLERANCE_MS = 2 * 60 * 60 * 1000;
 
-// Publer's job status gives no post id, so find our post by id or by its opening words
-export function findMatchingPost(posts, { publerPostId, text, accountId }) {
-  if (publerPostId) {
-    const byId = posts.find(p => String(p.id) === String(publerPostId));
-    if (byId) return byId;
-  }
-  const opening = firstWords(text);
-  if (!opening) return null;
+// Publer's job status gives no post id, so find our post among Publer's posts.
+// With a known Publer id, only that id counts. Otherwise the account and the whole text
+// must match, the time must be close, and ids already used by other posts are skipped.
+export function findMatchingPost(posts, { publerPostId, text, accountId, around, excludeIds } = {}) {
+  if (publerPostId) return posts.find(p => String(p.id) === String(publerPostId)) || null;
+
+  const wanted = comparable(text);
+  if (!wanted) return null;
   return posts.find(p => {
+    if (excludeIds?.has(String(p.id))) return false;
     if (accountId && p.account_id && String(p.account_id) !== String(accountId)) return false;
-    return firstWords(p.text) === opening;
+    if (comparable(p.text) !== wanted) return false;
+    const when = postTime(p);
+    if (around && when && Math.abs(new Date(when).getTime() - new Date(around).getTime()) > TIME_TOLERANCE_MS) return false;
+    return true;
   }) || null;
 }
