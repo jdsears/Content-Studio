@@ -1,4 +1,22 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+
+// All app API calls go through here. If the login has expired the app returns to the login screen.
+const apiFetch = async (url, options = {}) => {
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  if (response.status === 401) {
+    response.clone().json()
+      .then(data => { if (data?.code === 'login_required') window.dispatchEvent(new Event('cs:logged-out')); })
+      .catch(() => {});
+  }
+  return response;
+};
+
+const CLAUDE_NOT_SET = 'Claude is not set up on the server yet. Add ANTHROPIC_API_KEY in Railway > Variables.';
+const REPLICATE_NOT_SET = 'Replicate is not set up on the server yet. Add REPLICATE_API_TOKEN in Railway > Variables.';
 
 // Historical performance data with timing
 const historicalPerformance = [
@@ -244,16 +262,14 @@ const getNextTimeSlots = (platform, count = 5) => {
   return slots;
 };
 
-// Generate AI image using Claude + Replicate (Flux Schnell)
-const generateAIImage = async (content, platform, claudeApiKey, replicateApiKey) => {
+// Generate AI image using Claude + Replicate (Flux Schnell). Keys stay on the server.
+const generateAIImage = async (content, platform) => {
   // Step 1: Generate optimized image prompt using Claude
   let imagePrompt;
   try {
-    const promptResponse = await fetch('/api/generate-image-prompt', {
+    const promptResponse = await apiFetch('/api/generate-image-prompt', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        apiKey: claudeApiKey,
         postContent: content,
         platform,
         style: 'modern professional, dark moody backgrounds'
@@ -275,11 +291,9 @@ const generateAIImage = async (content, platform, claudeApiKey, replicateApiKey)
   // Step 2: Generate image using Replicate (Flux Schnell)
   const aspectRatio = platform === 'instagram' ? 'portrait' : 'landscape';
 
-  const response = await fetch('/api/generate-image', {
+  const response = await apiFetch('/api/generate-image', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      replicateApiKey,
       prompt: imagePrompt,
       aspectRatio,
     }),
@@ -305,7 +319,7 @@ const templateThemes = {
 };
 
 // Content Generator with optimal timing and images
-const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setGeneratorState, workspace }) => {
+const ContentGenerator = ({ onGenerate, insights, settings, serverConfig, generatorState, setGeneratorState, workspace }) => {
   // Use workspace pillars if available, otherwise global defaults
   const activePillars = (workspace?.pillars?.length ? workspace.pillars : pillars);
   // Use lifted state from parent
@@ -369,14 +383,12 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
 
     let content;
 
-    // Use Claude API if key is configured, otherwise use fallback
-    if (settings.claudeApiKey) {
+    // Use Claude if the server has a key, otherwise use fallback
+    if (serverConfig?.claude) {
       try {
-        const response = await fetch('/api/generate', {
+        const response = await apiFetch('/api/generate', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            apiKey: settings.claudeApiKey,
             topic,
             pillar: activePillars.find(p => p.id === selectedPillar)?.name,
             platforms,
@@ -427,14 +439,14 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
       try {
         let imageUrl;
         if (imgSettings.type === 'ai') {
-          if (!settings.replicateApiKey) {
-            console.warn(`No Replicate API key configured, using template for ${platform}`);
-            alert(`Replicate API key not configured. Using template for ${platform} image.`);
+          if (!serverConfig?.replicate) {
+            console.warn(`Replicate not configured on the server, using template for ${platform}`);
+            alert(`${REPLICATE_NOT_SET} Using template for ${platform} image.`);
             imageUrl = await generateTemplateImage(content[platform], imgSettings.template, platform, imgSettings.theme);
           } else {
             // AI image generation using Claude + Replicate
             try {
-              imageUrl = await generateAIImage(content[platform], platform, settings.claudeApiKey, settings.replicateApiKey);
+              imageUrl = await generateAIImage(content[platform], platform);
             } catch (error) {
               console.error(`AI image generation failed for ${platform}:`, error);
               alert(`AI image generation failed for ${platform}: ${error.message}. Using template instead.`);
@@ -464,9 +476,9 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
     const imgSettings = platformImageSettings[platform] || { enabled: true, type: 'template', template: 'quote', theme: 'midnight' };
     setGeneratingImages(prev => ({ ...prev, [platform]: true }));
 
-    if (imgSettings.type === 'ai' && settings.replicateApiKey) {
+    if (imgSettings.type === 'ai' && serverConfig?.replicate) {
       try {
-        const imageUrl = await generateAIImage(content, platform, settings.claudeApiKey, settings.replicateApiKey);
+        const imageUrl = await generateAIImage(content, platform);
         setGeneratedImages(prev => ({ ...prev, [platform]: imageUrl }));
       } catch (error) {
         console.error(`AI image regeneration failed for ${platform}:`, error);
@@ -627,17 +639,15 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
           <label className="text-sm text-slate-400">Topic or idea</label>
           <button
             onClick={async () => {
-              if (!settings.claudeApiKey) {
-                alert('Please add your Claude API key in Settings to use topic suggestions');
+              if (!serverConfig?.claude) {
+                alert(CLAUDE_NOT_SET);
                 return;
               }
               setGenerating(true);
               try {
-                const response = await fetch('/api/suggest-topic', {
+                const response = await apiFetch('/api/suggest-topic', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    apiKey: settings.claudeApiKey,
                     pillar: activePillars.find(p => p.id === selectedPillar)?.name,
                   }),
                 });
@@ -736,8 +746,8 @@ const ContentGenerator = ({ onGenerate, insights, settings, generatorState, setG
                               AI Generated
                             </button>
                           </div>
-                          {imgSettings.type === 'ai' && !settings.replicateApiKey && (
-                            <p className="text-xs text-yellow-400 mt-1">Replicate API key required for AI images</p>
+                          {imgSettings.type === 'ai' && !serverConfig?.replicate && (
+                            <p className="text-xs text-yellow-400 mt-1">AI images need REPLICATE_API_TOKEN set in Railway</p>
                           )}
                         </div>
 
@@ -1364,106 +1374,141 @@ const QuoteCardMaker = () => {
   );
 };
 
-// Settings Panel with localStorage persistence (auto-save)
-const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
+// Status row for a key that lives in Railway variables
+const ServerKeyRow = ({ label, configured, envName }) => (
+  <div className="flex items-center justify-between gap-3">
+    <span className="text-sm text-slate-300">{label}</span>
+    {configured ? (
+      <span className="px-2 py-1 text-xs bg-green-900/50 text-green-400 rounded border border-green-700/50">Set on server</span>
+    ) : (
+      <span className="px-2 py-1 text-xs bg-yellow-500/10 text-yellow-400 rounded border border-yellow-500/30">Add {envName} in Railway</span>
+    )}
+  </div>
+);
+
+// Settings Panel. Preferences save to this browser; keys and Publer settings save on the server.
+const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, onWorkspaceUpdated }) => {
   const [saveStatus, setSaveStatus] = useState('');
   const [testingPubler, setTestingPubler] = useState(false);
   const [publerStatus, setPublerStatus] = useState(null);
+  const [newPublerKey, setNewPublerKey] = useState('');
+  const [savingPubler, setSavingPubler] = useState(false);
+  const [generatedKey, setGeneratedKey] = useState(null);
 
-  // Load cached Publer status from localStorage on mount
-  useEffect(() => {
-    const cached = localStorage.getItem('publerConnectionStatus');
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        // Only use cached status if API key matches
-        if (parsed.apiKeyHash === settings.publerApiKey?.slice(-8)) {
-          setPublerStatus(parsed.status);
-        }
-      } catch (e) {
-        console.error('Failed to parse cached Publer status:', e);
-      }
-    }
-  }, [settings.publerApiKey]);
-
-  // Auto-test connection on mount if API key exists but no cached status
-  useEffect(() => {
-    if (settings.publerApiKey && !publerStatus && !testingPubler) {
-      const cached = localStorage.getItem('publerConnectionStatus');
-      if (!cached) {
-        testPublerConnection();
-      }
-    }
-  }, [settings.publerApiKey]);
-
-  const handleChange = (key, value) => {
-    const newSettings = { ...settings, [key]: value };
-    onSettingsChange(newSettings);
+  const showSaved = () => {
     setSaveStatus('saved');
     setTimeout(() => setSaveStatus(''), 2000);
+  };
 
-    // Sync Publer settings to server for workspace (so Marcus/agents can use them)
-    if ((key === 'publerApiKey' || key === 'platformAccounts') && workspace?.id) {
-      fetch(`/api/workspaces/${workspace.id}/publer-settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          publerApiKey: key === 'publerApiKey' ? value : settings.publerApiKey,
-          platformAccounts: key === 'platformAccounts' ? value : settings.platformAccounts,
-        }),
-      }).catch(() => {}); // Fire and forget
-    }
+  const handleChange = (key, value) => {
+    onSettingsChange({ ...settings, [key]: value });
+    showSaved();
   };
 
   const testPublerConnection = async () => {
-    if (!settings.publerApiKey) {
-      setPublerStatus({ success: false, message: 'Please enter a Publer API key first' });
+    if (!workspace?.has_publer_key) {
+      setPublerStatus({ success: false, message: 'Paste and save a Publer API key first' });
       return;
     }
     setTestingPubler(true);
     setPublerStatus(null);
     try {
-      const response = await fetch('/api/publer/test', {
+      const response = await apiFetch('/api/publer/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: settings.publerApiKey }),
+        body: JSON.stringify({ workspaceId: workspace.id }),
       });
       const data = await response.json();
       if (response.ok && data.success) {
-        const newStatus = {
+        setPublerStatus({
           success: true,
           message: `Connected! Found ${data.accountCount} account(s): ${data.accounts}`,
-          accountsList: data.accountsList || []
-        };
-        setPublerStatus(newStatus);
-        // Cache the status to localStorage with last 8 chars of API key as hash
-        localStorage.setItem('publerConnectionStatus', JSON.stringify({
-          apiKeyHash: settings.publerApiKey.slice(-8),
-          status: newStatus,
-          timestamp: Date.now()
-        }));
-        // Sync Publer API key to server workspace
-        if (workspace?.id) {
-          fetch(`/api/workspaces/${workspace.id}/publer-settings`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              publerApiKey: settings.publerApiKey,
-              platformAccounts: settings.platformAccounts || {},
-            }),
-          }).catch(() => {});
-        }
+          accountsList: data.accountsList || [],
+        });
       } else {
         setPublerStatus({ success: false, message: data.error || 'Connection failed' });
-        // Clear cached status on failure
-        localStorage.removeItem('publerConnectionStatus');
       }
     } catch (error) {
       setPublerStatus({ success: false, message: error.message });
-      localStorage.removeItem('publerConnectionStatus');
     }
     setTestingPubler(false);
   };
+
+  // Load connected accounts when Settings opens for a workspace with a saved key
+  useEffect(() => {
+    setPublerStatus(null);
+    setNewPublerKey('');
+    setGeneratedKey(null);
+    if (workspace?.has_publer_key) testPublerConnection();
+  }, [workspace?.id]);
+
+  const savePublerSettings = async (body) => {
+    const response = await apiFetch(`/api/workspaces/${workspace.id}/publer-settings`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Failed to save Publer settings');
+    if (data.workspace) onWorkspaceUpdated(data.workspace);
+    return data;
+  };
+
+  const handleSavePublerKey = async () => {
+    if (!newPublerKey.trim()) return;
+    setSavingPubler(true);
+    setPublerStatus(null);
+    try {
+      const data = await savePublerSettings({ publerApiKey: newPublerKey.trim() });
+      const accounts = data.accounts || [];
+      setNewPublerKey('');
+      setPublerStatus({
+        success: true,
+        message: `Key saved and working. Found ${accounts.length} account(s).`,
+        accountsList: accounts,
+      });
+    } catch (error) {
+      setPublerStatus({ success: false, message: error.message });
+    }
+    setSavingPubler(false);
+  };
+
+  const handleRemovePublerKey = async () => {
+    if (!window.confirm('Remove the saved Publer key for this workspace? Publishing stops until a new key is saved.')) return;
+    try {
+      await savePublerSettings({ publerApiKey: null });
+      setPublerStatus(null);
+    } catch (error) {
+      setPublerStatus({ success: false, message: error.message });
+    }
+  };
+
+  const handleAccountChange = async (platform, accountId) => {
+    const next = { ...(workspace.platform_accounts || {}) };
+    if (accountId) next[platform] = accountId;
+    else delete next[platform];
+    try {
+      await savePublerSettings({ platformAccounts: next });
+      showSaved();
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const handleGenerateKey = async () => {
+    if (workspace.has_api_key && !window.confirm('Generate a new key? The old key stops working straight away, so anything using it must be updated.')) return;
+    try {
+      const resp = await apiFetch(`/api/workspaces/${workspace.id}/generate-api-key`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to generate API key');
+      setGeneratedKey(data.api_key);
+      navigator.clipboard?.writeText(data.api_key).catch(() => {});
+      const wsResp = await apiFetch(`/api/workspaces/${workspace.id}`);
+      if (wsResp.ok) onWorkspaceUpdated(await wsResp.json());
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const storage = serverConfig?.storage;
 
   return (
     <div className="space-y-6">
@@ -1480,12 +1525,23 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
       </div>
 
       <div className="p-3 bg-blue-900/20 rounded-lg border border-blue-800/30 text-xs text-blue-300">
-        Settings auto-save to your browser. They persist across sessions.
+        Preferences save to this browser. API keys and Publer settings are stored on the server and are never shown in full.
       </div>
+
+      {storage && !storage.ok && (
+        <div className="p-3 bg-red-900/40 rounded-lg border border-red-700/50 text-xs text-red-300">
+          Server storage error: {storage.error}
+        </div>
+      )}
+      {storage && storage.ok && !storage.persistent && (
+        <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30 text-xs text-yellow-300">
+          Server storage is not permanent yet, so saved keys will be lost on the next deploy. Add a Railway Volume (or Supabase) to keep them.
+        </div>
+      )}
 
       <div>
         <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
-        <p className="text-xs text-slate-500 mb-3">Assign a Publer account to each platform for this workspace. Test your Publer connection first to load available accounts.</p>
+        <p className="text-xs text-slate-500 mb-3">Assign a Publer account to each platform for this workspace. Save a working Publer key first to load available accounts.</p>
         <div className="space-y-3">
           {[
             { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin', 'in_profile', 'in_'] },
@@ -1498,9 +1554,10 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
             const matchingAccounts = allAccounts.filter(
               acc => publerPlatforms.some(pp => acc.platform?.toLowerCase()?.includes(pp))
             );
-            const selectedId = settings.platformAccounts?.[p] || '';
-            const selectedAccount = allAccounts.find(acc => acc.id === selectedId);
+            const selectedId = workspace?.platform_accounts?.[p] || '';
+            const selectedAccount = allAccounts.find(acc => String(acc.id) === selectedId);
             const isAssigned = !!selectedId && !!selectedAccount;
+            const options = matchingAccounts.length > 0 ? matchingAccounts : allAccounts;
 
             return (
               <div key={p} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
@@ -1510,45 +1567,25 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
                     <div>
                       <p className="text-sm text-white">{label}</p>
                       <p className={`text-xs ${isAssigned ? 'text-green-500' : 'text-slate-500'}`}>
-                        {isAssigned ? `Assigned: ${selectedAccount.name}` : matchingAccounts.length > 0 ? 'Select an account below' : 'No matching accounts found'}
+                        {isAssigned ? `Assigned: ${selectedAccount.name}` : selectedId ? 'Assigned (test connection to see name)' : matchingAccounts.length > 0 ? 'Select an account below' : 'No matching accounts found'}
                       </p>
                     </div>
                   </div>
-                  {isAssigned ? (
+                  {selectedId ? (
                     <span className="px-3 py-1.5 text-xs bg-green-900/50 text-green-400 rounded-lg border border-green-700/50">Connected</span>
                   ) : (
                     <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">Not assigned</span>
                   )}
                 </div>
-                {matchingAccounts.length > 0 && (
+                {options.length > 0 && (
                   <select
                     value={selectedId}
-                    onChange={(e) => {
-                      const newAccounts = { ...(settings.platformAccounts || {}), [p]: e.target.value || null };
-                      if (!e.target.value) delete newAccounts[p];
-                      handleChange('platformAccounts', newAccounts);
-                    }}
+                    onChange={(e) => handleAccountChange(p, e.target.value)}
                     className="mt-3 w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
                   >
-                    <option value="">-- Select account --</option>
-                    {matchingAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.platform})</option>
-                    ))}
-                  </select>
-                )}
-                {matchingAccounts.length === 0 && allAccounts.length > 0 && (
-                  <select
-                    value={selectedId}
-                    onChange={(e) => {
-                      const newAccounts = { ...(settings.platformAccounts || {}), [p]: e.target.value || null };
-                      if (!e.target.value) delete newAccounts[p];
-                      handleChange('platformAccounts', newAccounts);
-                    }}
-                    className="mt-3 w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
-                  >
-                    <option value="">-- Select any account --</option>
-                    {allAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.platform})</option>
+                    <option value="">{matchingAccounts.length > 0 ? '-- Select account --' : '-- Select any account --'}</option>
+                    {options.map(acc => (
+                      <option key={acc.id} value={String(acc.id)}>{acc.name} ({acc.platform})</option>
                     ))}
                   </select>
                 )}
@@ -1561,21 +1598,39 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
       <div>
         <h3 className="text-sm font-medium text-slate-300 mb-4">Publer Integration</h3>
         <div className="space-y-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-slate-300">
+              {workspace?.has_publer_key ? <>Saved key ends in <code className="text-slate-200">…{workspace.publer_key_last4}</code></> : 'No Publer key saved for this workspace'}
+            </span>
+            {workspace?.has_publer_key && (
+              <button onClick={handleRemovePublerKey} className="text-xs text-slate-500 hover:text-red-400">Remove key</button>
+            )}
+          </div>
           <div>
-            <label className="text-xs text-slate-500 mb-1 block">Publer API Key</label>
-            <input
-              type="password"
-              value={settings.publerApiKey || ''}
-              onChange={(e) => handleChange('publerApiKey', e.target.value)}
-              placeholder="Enter your Publer API key"
-              className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
-            />
-            <p className="text-xs text-slate-500 mt-1">Get your API key from publer.io/settings/api</p>
+            <label className="text-xs text-slate-500 mb-1 block">{workspace?.has_publer_key ? 'Replace with a new Publer API key' : 'Publer API key'}</label>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                autoComplete="off"
+                value={newPublerKey}
+                onChange={(e) => setNewPublerKey(e.target.value)}
+                placeholder="Paste your Publer API key"
+                className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+              />
+              <button
+                onClick={handleSavePublerKey}
+                disabled={savingPubler || !newPublerKey.trim()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+              >
+                {savingPubler ? 'Checking...' : 'Save & test'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">The key is checked with Publer before it is saved. Get it from publer.io/settings/api</p>
           </div>
           <button
             onClick={testPublerConnection}
-            disabled={testingPubler}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white text-sm font-medium rounded-lg transition-colors"
+            disabled={testingPubler || !workspace?.has_publer_key}
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {testingPubler ? 'Testing...' : 'Test Connection'}
           </button>
@@ -1622,29 +1677,11 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
       </div>
 
       <div>
-        <h3 className="text-sm font-medium text-slate-300 mb-4">API Keys</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Replicate API Key (for AI images)</label>
-            <input
-              type="password"
-              value={settings.replicateApiKey || ''}
-              onChange={(e) => handleChange('replicateApiKey', e.target.value)}
-              placeholder="r8_..."
-              className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
-            />
-            <p className="text-xs text-slate-600 mt-1">Get at replicate.com/account/api-tokens (~$0.003/image)</p>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Claude API Key (for content generation)</label>
-            <input
-              type="password"
-              value={settings.claudeApiKey || ''}
-              onChange={(e) => handleChange('claudeApiKey', e.target.value)}
-              placeholder="sk-ant-..."
-              className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
-            />
-          </div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">AI Services</h3>
+        <div className="space-y-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+          <ServerKeyRow label="Claude (content generation)" configured={serverConfig?.claude} envName="ANTHROPIC_API_KEY" />
+          <ServerKeyRow label="Replicate (AI images)" configured={serverConfig?.replicate} envName="REPLICATE_API_TOKEN" />
+          <p className="text-[10px] text-slate-500">These keys are stored in Railway and never sent to your browser.</p>
         </div>
       </div>
 
@@ -1685,34 +1722,100 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace }) => {
             <p className="text-xs text-slate-400">
               API keys allow external agents (like Marcus, Touchline's AI CMO) to submit content programmatically to this workspace.
             </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-xs text-slate-400 font-mono">
-                {workspace.has_api_key ? '••••••••••••••••' : 'No API key generated'}
-              </code>
-              <button
-                onClick={async () => {
-                  try {
-                    const resp = await fetch(`/api/workspaces/${workspace.id}/generate-api-key`, { method: 'POST' });
-                    const data = await resp.json();
-                    if (data.api_key) {
-                      navigator.clipboard.writeText(data.api_key);
-                      alert('New API key generated and copied to clipboard. Store it securely - it won\'t be shown again.');
-                    }
-                  } catch (e) {
-                    alert('Failed to generate API key');
-                  }
-                }}
-                className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
-              >
-                {workspace.has_api_key ? 'Regenerate' : 'Generate Key'}
-              </button>
-            </div>
+            {workspace.api_key_source === 'railway' ? (
+              <p className="text-sm text-slate-300">
+                Set in Railway as <code className="text-slate-200">{workspace.api_key_env_name}</code>, ends in <code className="text-slate-200">…{workspace.api_key_last4}</code>. Change it in Railway.
+              </p>
+            ) : (
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-xs text-slate-400 font-mono">
+                  {workspace.has_api_key ? `Key ends in …${workspace.api_key_last4}` : 'No API key generated'}
+                </code>
+                <button
+                  onClick={handleGenerateKey}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+                >
+                  {workspace.has_api_key ? 'Regenerate' : 'Generate Key'}
+                </button>
+              </div>
+            )}
+            {generatedKey && (
+              <div className="p-3 bg-green-900/30 border border-green-700/50 rounded-lg space-y-1">
+                <p className="text-xs text-green-300">New key (copied to clipboard). Store it securely: it won't be shown again.</p>
+                <code className="block text-xs text-white font-mono break-all select-all">{generatedKey}</code>
+              </div>
+            )}
             <p className="text-[10px] text-slate-500">
-              API base: <code className="text-slate-400">/api/v1/content/</code> — Endpoints: generate, submit, queue, analytics
+              API base: <code className="text-slate-400">/api/v1/content/</code> and <code className="text-slate-400">/api/posts</code>. Send the key as <code className="text-slate-400">Authorization: Bearer &lt;key&gt;</code>
             </p>
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// Login screen (one shared password, set as ADMIN_PASSWORD in Railway)
+const LoginScreen = ({ passwordSet, serverError, onLoggedIn }) => {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        setPassword('');
+        onLoggedIn();
+      } else {
+        setError(data.error || 'Login failed');
+      }
+    } catch {
+      setError('Could not reach the server');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center px-4">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm p-6 bg-slate-900/60 border border-slate-800 rounded-xl space-y-4">
+        <div>
+          <h1 className="text-lg font-medium text-white">Content Studio</h1>
+          <p className="text-xs text-slate-500 mt-1">Enter the admin password to continue.</p>
+        </div>
+        {!passwordSet && (
+          <p className="p-3 text-xs bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 rounded-lg">
+            ADMIN_PASSWORD is not set on the server yet. Add it in Railway &gt; Variables, then reload.
+          </p>
+        )}
+        {serverError && <p className="text-xs text-red-400">{serverError}</p>}
+        <input
+          type="password"
+          autoFocus
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-slate-500"
+        />
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <button
+          type="submit"
+          disabled={busy || !password || !passwordSet}
+          className="w-full py-2 bg-white text-slate-900 text-sm font-medium rounded-lg hover:bg-slate-100 disabled:opacity-50"
+        >
+          {busy ? 'Checking...' : 'Log in'}
+        </button>
+      </form>
     </div>
   );
 };
@@ -1765,8 +1868,35 @@ const WorkspaceSwitcher = ({ workspaces, activeWorkspace, onSwitch }) => {
   );
 };
 
-export default function ContentStudio() {
+// Keys used to be kept in the browser. They now live on the server only, so remove old copies.
+const LEGACY_SECRET_FIELDS = ['publerApiKey', 'claudeApiKey', 'replicateApiKey'];
+
+const removeLegacySecretsFromBrowser = () => {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('contentStudioSettings_')) continue;
+      const saved = JSON.parse(localStorage.getItem(key) || '{}');
+      if (LEGACY_SECRET_FIELDS.some(field => field in saved)) {
+        LEGACY_SECRET_FIELDS.forEach(field => delete saved[field]);
+        localStorage.setItem(key, JSON.stringify(saved));
+      }
+    }
+    localStorage.removeItem('publerConnectionStatus');
+  } catch {}
+};
+
+function StudioApp({ onLogout }) {
   const [activeTab, setActiveTab] = useState('generate');
+
+  // What the server has configured (Claude, Replicate, storage). Never the keys themselves.
+  const [serverConfig, setServerConfig] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (data) setServerConfig(data); })
+      .catch(() => {});
+  }, []);
 
   // Workspace state
   const [workspaces, setWorkspaces] = useState([]);
@@ -1776,7 +1906,7 @@ export default function ContentStudio() {
 
   // Fetch workspaces on mount
   useEffect(() => {
-    fetch('/api/workspaces')
+    apiFetch('/api/workspaces')
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
@@ -1807,6 +1937,11 @@ export default function ContentStudio() {
   };
 
   const currentWorkspace = workspaces.find(w => w.id === activeWorkspace) || workspaces[0];
+
+  // Replace a workspace after its server-side settings change
+  const handleWorkspaceUpdated = (updated) => {
+    setWorkspaces(prev => prev.map(w => (w.id === updated.id ? { ...w, ...updated } : w)));
+  };
 
   // Posts queue with localStorage persistence (per workspace)
   const postsKey = `contentStudioPosts_${activeWorkspace}`;
@@ -1864,17 +1999,14 @@ export default function ContentStudio() {
   // Settings with localStorage persistence (per workspace)
   const settingsKey = `contentStudioSettings_${activeWorkspace}`;
   const defaultSettings = {
-    publerApiKey: '',
     publerWorkspaceId: '',
-    replicateApiKey: '',
-    claudeApiKey: '',
     autoSchedule: true,
     includeImages: true,
     defaultTemplate: 'quote',
     defaultPillar: 'ai',
-    platformAccounts: {},  // { linkedin: 'publer_account_id', facebook: '...', ... }
   };
   const [settings, setSettings] = useState(() => {
+    removeLegacySecretsFromBrowser();
     try {
       const saved = localStorage.getItem(settingsKey);
       return saved ? JSON.parse(saved) : defaultSettings;
@@ -1930,27 +2062,23 @@ export default function ContentStudio() {
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, image: null } : p));
   };
 
-  // Publish to Publer via backend proxy (avoids CORS issues)
+  // Publish to Publer via the server, using this workspace's saved Publer key and accounts
   const publishToPubler = async (post) => {
-    if (!settings.publerApiKey) {
+    if (!currentWorkspace?.has_publer_key) {
       throw new Error('Publer API key not configured');
     }
 
     try {
-      const response = await fetch('/api/publish', {
+      const response = await apiFetch('/api/publish', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
-          apiKey: settings.publerApiKey,
+          workspaceId: currentWorkspace.id,
           post: {
             content: post.content,
             platform: post.platform,
             image: post.image,
             scheduledFor: post.scheduledFor || post.suggestedTime,
           },
-          socialAccountId: settings.platformAccounts?.[post.platform] || null,
         }),
       });
 
@@ -1972,8 +2100,8 @@ export default function ContentStudio() {
     const post = posts.find(p => p.id === id);
     if (!post) return;
 
-    // If Publer API key is configured and platform supports it, publish automatically
-    if (settings.publerApiKey && post.platform !== 'x') {
+    // If a Publer key is saved for this workspace and the platform supports it, publish automatically
+    if (currentWorkspace?.has_publer_key && post.platform !== 'x') {
       // Update status to publishing
       setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'publishing' } : p));
 
@@ -2037,6 +2165,7 @@ export default function ContentStudio() {
             <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm">
               {currentWorkspace?.name?.[0] || 'C'}
             </div>
+            <button onClick={onLogout} className="text-xs text-slate-500 hover:text-slate-200">Log out</button>
           </div>
         </div>
       </header>
@@ -2054,14 +2183,49 @@ export default function ContentStudio() {
 
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className={activeTab === 'insights' ? '' : 'max-w-2xl'}>
-          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} generatorState={generatorState} setGeneratorState={setGeneratorState} workspace={currentWorkspace} />}
+          {activeTab === 'generate' && <ContentGenerator onGenerate={handleGenerate} insights={insights} settings={settings} serverConfig={serverConfig} generatorState={generatorState} setGeneratorState={setGeneratorState} workspace={currentWorkspace} />}
           {activeTab === 'queue' && <ApprovalQueue posts={posts} onApprove={handleApprove} onReject={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'rejected' } : p))} onUnapprove={(id) => setPosts(prev => prev.map(p => p.id === id ? { ...p, status: 'pending', approvedAt: null, error: null } : p))} onRemoveImage={handleRemoveImage} onCopy={handleCopyToClipboard} onEdit={(id, newContent) => setPosts(prev => prev.map(p => p.id === id ? { ...p, content: newContent } : p))} onDelete={(id) => setPosts(prev => prev.filter(p => p.id !== id))} />}
           {activeTab === 'calendar' && <CalendarView posts={posts} />}
           {activeTab === 'graphics' && <QuoteCardMaker />}
           {activeTab === 'insights' && <InsightsDashboard performance={performance} />}
-          {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} workspace={currentWorkspace} />}
+          {activeTab === 'settings' && <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} workspace={currentWorkspace} serverConfig={serverConfig} onWorkspaceUpdated={handleWorkspaceUpdated} />}
         </div>
       </main>
     </div>
   );
+}
+
+// Shows the login screen until the admin password has been entered
+export default function ContentStudio() {
+  const [auth, setAuth] = useState({ status: 'checking', passwordSet: true, error: null });
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const response = await fetch('/api/auth/me', { credentials: 'same-origin' });
+      const data = await response.json();
+      setAuth({ status: data.authenticated ? 'in' : 'out', passwordSet: data.passwordSet, error: null });
+    } catch {
+      setAuth({ status: 'out', passwordSet: true, error: 'Could not reach the server' });
+    }
+  }, []);
+
+  useEffect(() => { checkAuth(); }, [checkAuth]);
+
+  // Any API call that finds the login has expired sends us back here
+  useEffect(() => {
+    const handleLoggedOut = () => setAuth(prev => ({ ...prev, status: 'out' }));
+    window.addEventListener('cs:logged-out', handleLoggedOut);
+    return () => window.removeEventListener('cs:logged-out', handleLoggedOut);
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    setAuth(prev => ({ ...prev, status: 'out' }));
+  };
+
+  if (auth.status === 'checking') return <div className="min-h-screen bg-slate-950" />;
+  if (auth.status === 'out') {
+    return <LoginScreen passwordSet={auth.passwordSet} serverError={auth.error} onLoggedIn={() => setAuth(prev => ({ ...prev, status: 'in' }))} />;
+  }
+  return <StudioApp onLogout={handleLogout} />;
 }
