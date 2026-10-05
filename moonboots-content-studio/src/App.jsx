@@ -1470,6 +1470,8 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
   const [saveStatus, setSaveStatus] = useState('');
   const [testingPubler, setTestingPubler] = useState(false);
   const [publerStatus, setPublerStatus] = useState(null);
+  // Accounts the saved key can post to (kept when a new key fails its check)
+  const [publerAccounts, setPublerAccounts] = useState([]);
   const [newPublerKey, setNewPublerKey] = useState('');
   const [savingPubler, setSavingPubler] = useState(false);
   const [generatedKey, setGeneratedKey] = useState(null);
@@ -1500,11 +1502,12 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
       if (response.ok && data.success) {
         setPublerStatus({
           success: true,
-          message: `Connected! Found ${data.accountCount} account(s): ${data.accounts}`,
-          accountsList: data.accountsList || [],
+          message: `Connected. Publer can post to ${data.accountCount} account${data.accountCount === 1 ? '' : 's'}.`,
         });
+        setPublerAccounts(data.accountsList || []);
       } else {
-        setPublerStatus({ success: false, message: data.error || 'Connection failed' });
+        setPublerStatus({ success: false, message: data.error || 'Connection failed', hint: data.hint });
+        setPublerAccounts([]);
       }
     } catch (error) {
       setPublerStatus({ success: false, message: error.message });
@@ -1515,6 +1518,7 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
   // Load connected accounts when Settings opens for a workspace with a saved key
   useEffect(() => {
     setPublerStatus(null);
+    setPublerAccounts([]);
     setNewPublerKey('');
     setGeneratedKey(null);
     if (workspace?.has_publer_key) testPublerConnection();
@@ -1526,7 +1530,11 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
       body: JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Failed to save Publer settings');
+    if (!response.ok) {
+      const error = new Error(data.error || 'Failed to save Publer settings');
+      error.hint = data.hint;
+      throw error;
+    }
     if (data.workspace) onWorkspaceUpdated(data.workspace);
     return data;
   };
@@ -1541,11 +1549,11 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
       setNewPublerKey('');
       setPublerStatus({
         success: true,
-        message: `Key saved and working. Found ${accounts.length} account(s).`,
-        accountsList: accounts,
+        message: `Key saved and working. Publer can post to ${accounts.length} account${accounts.length === 1 ? '' : 's'}.`,
       });
+      setPublerAccounts(accounts);
     } catch (error) {
-      setPublerStatus({ success: false, message: error.message });
+      setPublerStatus({ success: false, message: error.message, hint: error.hint });
     }
     setSavingPubler(false);
   };
@@ -1555,6 +1563,7 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
     try {
       await savePublerSettings({ publerApiKey: null });
       setPublerStatus(null);
+      setPublerAccounts([]);
     } catch (error) {
       setPublerStatus({ success: false, message: error.message });
     }
@@ -1619,63 +1628,8 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
       )}
 
       <div>
-        <h3 className="text-sm font-medium text-slate-300 mb-4">Connected Accounts</h3>
-        <p className="text-xs text-slate-500 mb-3">Assign a Publer account to each platform for this workspace. Save a working Publer key first to load available accounts.</p>
-        <div className="space-y-3">
-          {[
-            { p: 'linkedin', label: 'LinkedIn', publerPlatforms: ['linkedin', 'in_profile', 'in_'] },
-            { p: 'facebook', label: 'Facebook', publerPlatforms: ['facebook', 'fb_page', 'fb_'] },
-            { p: 'instagram', label: 'Instagram', publerPlatforms: ['instagram', 'ig_business', 'ig_'] },
-            { p: 'x', label: 'X (Twitter)', publerPlatforms: ['twitter', 'x'] }
-          ].map(({ p, label, publerPlatforms }) => {
-            const allAccounts = publerStatus?.accountsList || [];
-            // Filter to accounts matching this platform type
-            const matchingAccounts = allAccounts.filter(
-              acc => publerPlatforms.some(pp => acc.platform?.toLowerCase()?.includes(pp))
-            );
-            const selectedId = workspace?.platform_accounts?.[p] || '';
-            const selectedAccount = allAccounts.find(acc => String(acc.id) === selectedId);
-            const isAssigned = !!selectedId && !!selectedAccount;
-            const options = matchingAccounts.length > 0 ? matchingAccounts : allAccounts;
-
-            return (
-              <div key={p} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
-                    <div>
-                      <p className="text-sm text-white">{label}</p>
-                      <p className={`text-xs ${isAssigned ? 'text-green-500' : 'text-slate-500'}`}>
-                        {isAssigned ? `Assigned: ${selectedAccount.name}` : selectedId ? 'Assigned (test connection to see name)' : matchingAccounts.length > 0 ? 'Select an account below' : 'No matching accounts found'}
-                      </p>
-                    </div>
-                  </div>
-                  {selectedId ? (
-                    <span className="px-3 py-1.5 text-xs bg-green-900/50 text-green-400 rounded-lg border border-green-700/50">Connected</span>
-                  ) : (
-                    <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">Not assigned</span>
-                  )}
-                </div>
-                {options.length > 0 && (
-                  <select
-                    value={selectedId}
-                    onChange={(e) => handleAccountChange(p, e.target.value)}
-                    className="mt-3 w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
-                  >
-                    <option value="">{matchingAccounts.length > 0 ? '-- Select account --' : '-- Select any account --'}</option>
-                    {options.map(acc => (
-                      <option key={acc.id} value={String(acc.id)}>{acc.name} ({acc.platform})</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <h3 className="text-sm font-medium text-slate-300 mb-4">Publer Integration</h3>
+        <h3 className="text-sm font-medium text-slate-300 mb-1">Publer for {workspace?.name || 'this workspace'}</h3>
+        <p className="text-xs text-slate-500 mb-4">Each workspace has its own Publer key. When a key expires, paste a new one here.</p>
         <div className="space-y-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-slate-300">
@@ -1704,20 +1658,92 @@ const SettingsPanel = ({ settings, onSettingsChange, workspace, serverConfig, on
                 {savingPubler ? 'Checking...' : 'Save & test'}
               </button>
             </div>
-            <p className="text-xs text-slate-500 mt-1">The key is checked with Publer before it is saved. Get it from publer.io/settings/api</p>
+            <p className="text-xs text-slate-500 mt-1">The key is checked with Publer first and only saved if it works. Publer's API needs a Business or Enterprise plan.</p>
           </div>
           <button
             onClick={testPublerConnection}
             disabled={testingPubler || !workspace?.has_publer_key}
             className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            {testingPubler ? 'Testing...' : 'Test Connection'}
+            {testingPubler ? 'Testing...' : 'Test connection'}
           </button>
           {publerStatus && (
-            <div className={`p-3 rounded-lg text-sm ${publerStatus.success ? 'bg-green-900/50 text-green-300 border border-green-700/50' : 'bg-red-900/50 text-red-300 border border-red-700/50'}`}>
-              {publerStatus.message}
+            <div className={`p-3 rounded-lg text-sm space-y-1 ${publerStatus.success ? 'bg-green-900/50 text-green-300 border border-green-700/50' : 'bg-red-900/50 text-red-300 border border-red-700/50'}`}>
+              <p>{publerStatus.message}</p>
+              {publerStatus.hint && <p className="text-xs opacity-80">{publerStatus.hint}</p>}
             </div>
           )}
+          {publerAccounts.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-2">Accounts connected in Publer</p>
+              <ul className="space-y-1">
+                {publerAccounts.map(acc => (
+                  <li key={acc.id} className="flex items-center gap-2 text-sm text-slate-300">
+                    <PlatformIcon platform={acc.platform} className="w-4 h-4 text-slate-400" />
+                    <span>{acc.name}</span>
+                    <span className="text-xs text-slate-500">{acc.kind}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-1">Accounts this workspace posts to</h3>
+        <p className="text-xs text-slate-500 mb-3">Choose which Publer account each platform uses for {workspace?.name || 'this workspace'}.</p>
+        <div className="space-y-3">
+          {[
+            { p: 'linkedin', label: 'LinkedIn', hint: 'Usually a LinkedIn page' },
+            { p: 'facebook', label: 'Facebook', hint: 'A Facebook Page' },
+            { p: 'instagram', label: 'Instagram', hint: 'An Instagram business account' },
+            { p: 'x', label: 'X (Twitter)', hint: 'Posted by copy and paste for now' },
+          ].map(({ p, label, hint }) => {
+            const allAccounts = publerAccounts;
+            const matchingAccounts = allAccounts.filter(acc => acc.platform === p);
+            const selectedId = workspace?.platform_accounts?.[p] || '';
+            const selectedAccount = allAccounts.find(acc => String(acc.id) === selectedId);
+
+            return (
+              <div key={p} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <PlatformIcon platform={p} className="w-5 h-5 text-slate-400" />
+                    <div>
+                      <p className="text-sm text-white">{label}</p>
+                      <p className={`text-xs ${selectedAccount ? 'text-green-500' : 'text-slate-500'}`}>
+                        {selectedAccount ? `${selectedAccount.name} (${selectedAccount.kind})` : selectedId ? 'Chosen (test the connection to see its name)' : matchingAccounts.length > 0 ? 'Choose an account below' : allAccounts.length > 0 ? `No ${label} account connected in Publer` : hint}
+                      </p>
+                    </div>
+                  </div>
+                  {selectedId ? (
+                    <span className="px-3 py-1.5 text-xs bg-green-900/50 text-green-400 rounded-lg border border-green-700/50">Connected</span>
+                  ) : (
+                    <span className="px-3 py-1.5 text-xs bg-slate-800 text-slate-500 rounded-lg">Not chosen</span>
+                  )}
+                </div>
+                {matchingAccounts.length > 0 && (
+                  <select
+                    value={selectedId}
+                    onChange={(e) => handleAccountChange(p, e.target.value)}
+                    className="mt-3 w-full px-3 py-2 bg-slate-900/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:border-slate-500"
+                  >
+                    <option value="">Choose an account</option>
+                    {matchingAccounts.map(acc => (
+                      <option key={acc.id} value={String(acc.id)}>{acc.name} ({acc.kind})</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-medium text-slate-300 mb-4">Other Publer options</h3>
+        <div className="space-y-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
           <div>
             <label className="text-xs text-slate-500 mb-1 block">Workspace ID (optional)</label>
             <input
