@@ -1,8 +1,14 @@
 import express from 'express';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import sharp from 'sharp';
+import {
+  requireAdmin, handleLogin, handleLogout, handleMe,
+  safeEqual, sha256, envKeyFor, envKeyName, bearerToken,
+} from './server/auth.js';
+import { createStore } from './server/store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -10,10 +16,28 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Railway terminates HTTPS in front of us; trust it so req.secure and req.ip are correct
+app.set('trust proxy', 1);
+
 // Initialize Supabase client (if configured)
 const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
   ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
   : null;
+
+// Persistent store for workspace secrets (Supabase table or Railway Volume file)
+const store = createStore(supabase);
+
+// AI provider keys live in Railway variables only, never in the browser
+function claudeApiKey() {
+  return process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || null;
+}
+
+function replicateApiKey() {
+  return process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY || null;
+}
+
+const CLAUDE_KEY_MISSING = 'Claude is not set up on the server. Add ANTHROPIC_API_KEY in Railway > Variables.';
+const REPLICATE_KEY_MISSING = 'Replicate is not set up on the server. Add REPLICATE_API_TOKEN in Railway > Variables.';
 
 // ============ CONTEXT HELPER FUNCTIONS ============
 
@@ -138,7 +162,6 @@ const defaultWorkspaces = [
     id: 'moonboots',
     name: 'MoonBoots',
     slug: 'moonboots',
-    api_key: process.env.MOONBOOTS_API_KEY || null,
     brand_config: {
       tagline: 'Strategy to Execution',
       tone: 'Direct, conversational, no jargon, occasionally contrarian',
@@ -157,14 +180,12 @@ const defaultWorkspaces = [
       { id: 'transformation', name: 'Business Transformation', description: 'Bridging strategy to execution', example_angles: ['Founder lessons', 'Shipping over perfecting'] },
       { id: 'sport', name: 'Sport & Culture', description: 'Leadership, coaching mindset, football', example_angles: ['Football coaching parallels', 'Team culture'] },
     ],
-    publer_api_key: null, // Set per-workspace via settings
     created_at: '2025-01-01T00:00:00Z',
   },
   {
     id: 'touchline',
     name: 'Touchline',
     slug: 'touchline',
-    api_key: process.env.TOUCHLINE_API_KEY || null,
     brand_config: {
       tagline: 'Empowering Grassroots Football',
       tone: 'Enthusiastic, knowledgeable, supportive, community-focused. Never corporate or salesy.',
@@ -183,7 +204,6 @@ const defaultWorkspaces = [
       { id: 'community', name: 'Community & Club Stories', description: 'Stories from clubs and communities', example_angles: ['Club spotlights', 'Parent involvement', 'Inclusive football'] },
       { id: 'product', name: 'Product Updates & Features', description: 'Touchline platform news', example_angles: ['New features', 'How coaches use Touchline', 'Roadmap previews'] },
     ],
-    publer_api_key: null,
     created_at: '2026-01-30T00:00:00Z',
   },
 ];
@@ -212,24 +232,64 @@ async function getWorkspaceById(id) {
   return workspaces.find(w => w.id === id || w.slug === id);
 }
 
+// Server-only workspace settings: Publer key, Publer account choices, generated API key hash.
+// Never sent to the browser in full.
+async function getWorkspaceSecrets(workspaceId) {
+  try {
+    return (await store.get('workspace_settings', workspaceId)) || {};
+  } catch (error) {
+    console.error(`Failed to read settings for workspace ${workspaceId}:`, error.message);
+    return {};
+  }
+}
+
+async function updateWorkspaceSecrets(workspaceId, updates) {
+  // Read straight from the store so a failed read can't wipe the saved settings
+  const current = (await store.get('workspace_settings', workspaceId)) || {};
+  const next = { ...current, ...updates, updated_at: new Date().toISOString() };
+  for (const key of Object.keys(next)) {
+    if (next[key] === undefined || next[key] === null) delete next[key];
+  }
+  return store.set('workspace_settings', workspaceId, next);
+}
+
+const lastFour = (value) => (value ? String(value).slice(-4) : null);
+
+// The only workspace fields the browser is allowed to see
+async function publicWorkspace(ws) {
+  const secrets = await getWorkspaceSecrets(ws.id);
+  const envKey = envKeyFor(ws);
+  return {
+    id: ws.id,
+    name: ws.name,
+    slug: ws.slug,
+    brand_config: ws.brand_config,
+    pillars: ws.pillars,
+    created_at: ws.created_at,
+    has_api_key: !!(envKey || secrets.api_key_hash),
+    api_key_source: envKey ? 'railway' : secrets.api_key_hash ? 'generated' : null,
+    api_key_env_name: envKeyName(ws),
+    api_key_last4: envKey ? lastFour(envKey) : secrets.api_key_last4 || null,
+    has_publer_key: !!secrets.publer_api_key,
+    publer_key_last4: lastFour(secrets.publer_api_key),
+    platform_accounts: secrets.platform_accounts || {},
+  };
+}
+
+// A workspace key comes from its Railway variable (e.g. TOUCHLINE_API_KEY) when set;
+// otherwise from a key generated in Settings (only its hash is stored).
 async function getWorkspaceByApiKey(apiKey) {
   if (!apiKey) return null;
 
-  // Check env-based keys first
-  for (const ws of workspacesCache) {
-    if (ws.api_key && ws.api_key === apiKey) return ws;
-  }
-
-  // Check Supabase if available
-  if (supabase) {
-    try {
-      const { data } = await supabase
-        .from('workspaces')
-        .select('*')
-        .eq('api_key', apiKey)
-        .single();
-      if (data) return data;
-    } catch {}
+  const workspaces = await getWorkspaces();
+  for (const ws of workspaces) {
+    const envKey = envKeyFor(ws);
+    if (envKey) {
+      if (safeEqual(apiKey, envKey)) return ws;
+      continue;
+    }
+    const secrets = await getWorkspaceSecrets(ws.id);
+    if (secrets.api_key_hash && safeEqual(sha256(apiKey), secrets.api_key_hash)) return ws;
   }
 
   return null;
@@ -272,21 +332,21 @@ CONTENT GUIDELINES:
 ${pillarDetail ? `\nCurrent content pillar focus: ${pillarDetail.name} - ${pillarDetail.description}` : ''}`;
 }
 
-// API Key authentication middleware for external endpoints
+// Workspace API key (Bearer) authentication for Touchline HQ / Marcus.
+// The workspace always comes from the key, never from the request body.
 function authenticateApiKey(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const apiKey = bearerToken(req);
+  if (!apiKey) {
     return res.status(401).json({ error: 'Missing or invalid Authorization header. Use: Bearer <API_KEY>' });
   }
 
-  const apiKey = authHeader.slice(7);
   getWorkspaceByApiKey(apiKey).then(workspace => {
     if (!workspace) {
       return res.status(401).json({ error: 'Invalid API key' });
     }
     req.workspace = workspace;
     next();
-  }).catch(err => {
+  }).catch(() => {
     res.status(500).json({ error: 'Authentication failed' });
   });
 }
@@ -297,172 +357,169 @@ app.use(express.json({ limit: '50mb' }));
 // Serve static files from dist
 app.use(express.static(join(__dirname, 'dist')));
 
-// Publer - Get connected social accounts
-app.post('/api/publer/accounts', async (req, res) => {
-  const { apiKey } = req.body;
+// ============ ACCESS CONTROL ============
+// Every /api route needs the admin login, except:
+// - health and login routes (public)
+// - /api/posts and /api/v1/* (workspace API key, used by Touchline HQ)
+const PUBLIC_API_PATHS = new Set(['/health', '/auth/login', '/auth/logout', '/auth/me']);
 
+function isWorkspaceKeyPath(path) {
+  return path === '/posts' || path === '/posts/' || path.startsWith('/v1/');
+}
+
+app.use('/api', (req, res, next) => {
+  const path = req.path.toLowerCase();
+  if (PUBLIC_API_PATHS.has(path)) return next();
+  if (isWorkspaceKeyPath(path)) return authenticateApiKey(req, res, next);
+  return requireAdmin(req, res, next);
+});
+
+app.post('/api/auth/login', handleLogin);
+app.post('/api/auth/logout', handleLogout);
+app.get('/api/auth/me', handleMe);
+
+async function storageStatus() {
+  const check = await store.check();
+  return { type: store.type, persistent: store.persistent, ...check };
+}
+
+// What the server has configured (never the keys themselves)
+app.get('/api/config', async (req, res) => {
+  res.json({
+    claude: !!claudeApiKey(),
+    replicate: !!replicateApiKey(),
+    storage: await storageStatus(),
+  });
+});
+
+// ============ PUBLER HELPERS ============
+
+async function getSavedPublerKey(workspaceId) {
+  if (!workspaceId) return null;
+  const secrets = await getWorkspaceSecrets(workspaceId);
+  return secrets.publer_api_key || null;
+}
+
+const NO_PUBLER_KEY = 'No Publer API key saved for this workspace. Paste one in Settings.';
+const PUBLER_TIMEOUT_MS = 15000;
+
+// Check a Publer key and list the social accounts it can post to
+async function fetchPublerAccounts(apiKey) {
+  const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer-API ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(PUBLER_TIMEOUT_MS),
+  });
+
+  const wsText = await wsResponse.text();
+  console.log('Publer workspaces response status:', wsResponse.status);
+
+  if (wsText.trim().startsWith('<')) {
+    const titleMatch = wsText.match(/<title>(.*?)<\/title>/i);
+    const errorTitle = titleMatch ? titleMatch[1] : 'Unknown error';
+    console.error('Publer returned HTML page:', errorTitle);
+    return {
+      ok: false,
+      status: 401,
+      error: `Publer API error: ${errorTitle}. Check your API key format and plan.`,
+      hint: 'API key should be the full key from app.publer.com/settings',
+    };
+  }
+
+  let workspaces;
+  try {
+    workspaces = JSON.parse(wsText);
+  } catch (e) {
+    return { ok: false, status: 502, error: 'Invalid response from Publer' };
+  }
+
+  if (!wsResponse.ok || !workspaces || !workspaces.length) {
+    return { ok: false, status: 401, error: workspaces?.message || 'No workspaces found. Check your API key.' };
+  }
+
+  const publerWorkspaceId = workspaces[0].id;
+
+  const response = await fetch('https://app.publer.com/api/v1/accounts', {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer-API ${apiKey}`,
+      'Publer-Workspace-Id': publerWorkspaceId,
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(PUBLER_TIMEOUT_MS),
+  });
+
+  const responseText = await response.text();
+  if (responseText.trim().startsWith('<')) {
+    console.error('Publer accounts returned HTML:', responseText.substring(0, 200));
+    return { ok: false, status: 401, error: 'Invalid API key. Publer returned an error page.' };
+  }
+
+  let accounts;
+  try {
+    accounts = JSON.parse(responseText);
+  } catch (parseErr) {
+    return { ok: false, status: 502, error: 'Invalid response from Publer' };
+  }
+
+  if (!response.ok) {
+    return { ok: false, status: response.status, error: accounts.message || accounts.error || 'Failed to connect to Publer' };
+  }
+
+  // Publer may use different field names: social_network, type, network, platform
+  const getAccountPlatform = (acc) => acc.social_network || acc.type || acc.network || acc.platform || 'unknown';
+  const getAccountName = (acc) => acc.name || acc.username || acc.display_name || getAccountPlatform(acc);
+
+  return {
+    ok: true,
+    publerWorkspaceId,
+    accounts: (Array.isArray(accounts) ? accounts : []).map(a => ({
+      id: a.id,
+      platform: getAccountPlatform(a),
+      name: getAccountName(a),
+    })),
+  };
+}
+
+// Publer - Get connected social accounts (uses the workspace's saved key)
+app.post('/api/publer/accounts', async (req, res) => {
+  const apiKey = await getSavedPublerKey(req.body?.workspaceId);
   if (!apiKey) {
-    return res.status(400).json({ error: 'API key is required' });
+    return res.status(400).json({ error: NO_PUBLER_KEY });
   }
 
   try {
-    // First get workspace ID
-    const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer-API ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    const wsText = await wsResponse.text();
-    if (wsText.trim().startsWith('<') || !wsResponse.ok) {
-      return res.status(401).json({ error: 'Invalid API key' });
+    const result = await fetchPublerAccounts(apiKey);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, hint: result.hint });
     }
-
-    const workspaces = JSON.parse(wsText);
-    if (!workspaces || workspaces.length === 0) {
-      return res.status(400).json({ error: 'No workspaces found' });
-    }
-
-    const workspaceId = workspaces[0].id;
-
-    // Get social accounts
-    const response = await fetch('https://app.publer.com/api/v1/accounts', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer-API ${apiKey}`,
-        'Publer-Workspace-Id': workspaceId,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Publer accounts error:', data);
-      return res.status(response.status).json({
-        error: data.message || data.error || 'Failed to fetch Publer accounts',
-        details: data
-      });
-    }
-
-    // Return accounts with platform info
-    const accounts = (data || []).map(acc => ({
-      id: acc.id,
-      platform: acc.platform,
-      name: acc.name || acc.username || acc.platform,
-    }));
-
-    res.json({ success: true, accounts });
+    res.json({ success: true, accounts: result.accounts });
   } catch (error) {
     console.error('Publer accounts failed:', error);
     res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
   }
 });
 
-// Publer connection test endpoint
+// Publer connection test (uses the workspace's saved key)
 app.post('/api/publer/test', async (req, res) => {
-  const { apiKey } = req.body;
-
+  const apiKey = await getSavedPublerKey(req.body?.workspaceId);
   if (!apiKey) {
-    return res.status(400).json({ error: 'API key is required' });
+    return res.status(400).json({ error: NO_PUBLER_KEY });
   }
 
   try {
-    // First get workspaces to find workspace ID
-    const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer-API ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    const wsText = await wsResponse.text();
-    console.log('Publer workspaces response status:', wsResponse.status);
-    console.log('Publer workspaces response:', wsText.substring(0, 500));
-
-    if (wsText.trim().startsWith('<')) {
-      // Extract any useful info from the HTML
-      const titleMatch = wsText.match(/<title>(.*?)<\/title>/i);
-      const errorTitle = titleMatch ? titleMatch[1] : 'Unknown error';
-      console.error('Publer returned HTML page:', errorTitle);
-      return res.status(401).json({
-        error: `Publer API error: ${errorTitle}. Check your API key format and plan.`,
-        hint: 'API key should be the full key from app.publer.com/settings',
-        debug: `Status: ${wsResponse.status}`
-      });
+    const result = await fetchPublerAccounts(apiKey);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, hint: result.hint });
     }
-
-    let workspaces;
-    try {
-      workspaces = JSON.parse(wsText);
-    } catch (e) {
-      return res.status(500).json({ error: 'Invalid response from Publer' });
-    }
-
-    if (!wsResponse.ok || !workspaces || workspaces.length === 0) {
-      return res.status(401).json({
-        error: workspaces?.message || 'No workspaces found. Check your API key.',
-      });
-    }
-
-    const workspaceId = workspaces[0].id;
-
-    // Now get social accounts with workspace ID
-    const response = await fetch('https://app.publer.com/api/v1/accounts', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer-API ${apiKey}`,
-        'Publer-Workspace-Id': workspaceId,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    const responseText = await response.text();
-
-    // Check for HTML error page
-    if (responseText.trim().startsWith('<')) {
-      console.error('Publer test returned HTML:', responseText.substring(0, 200));
-      return res.status(401).json({
-        error: 'Invalid API key. Publer returned an error page.',
-        hint: 'Please verify your API key at publer.io/settings/api'
-      });
-    }
-
-    let accounts;
-    try {
-      accounts = JSON.parse(responseText);
-    } catch (parseErr) {
-      return res.status(500).json({ error: 'Invalid response from Publer' });
-    }
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: accounts.message || accounts.error || 'Failed to connect to Publer'
-      });
-    }
-
-    // Log account structure for debugging
-    if (accounts.length > 0) {
-      console.log('Publer account structure:', JSON.stringify(accounts[0], null, 2));
-    }
-
-    // Publer may use different field names: social_network, type, network, platform
-    const getAccountPlatform = (acc) => acc.social_network || acc.type || acc.network || acc.platform || 'unknown';
-    const getAccountName = (acc) => acc.name || acc.username || acc.display_name || getAccountPlatform(acc);
-
     res.json({
       success: true,
-      accountCount: accounts.length,
-      accounts: accounts.map(a => `${getAccountName(a)} (${getAccountPlatform(a)})`).join(', ') || 'None',
-      // Include full account data for the frontend
-      accountsList: accounts.map(a => ({
-        id: a.id,
-        platform: getAccountPlatform(a),
-        name: getAccountName(a),
-      }))
+      accountCount: result.accounts.length,
+      accounts: result.accounts.map(a => `${a.name} (${a.platform})`).join(', ') || 'None',
+      accountsList: result.accounts,
     });
   } catch (error) {
     console.error('Publer test failed:', error);
@@ -472,10 +529,15 @@ app.post('/api/publer/test', async (req, res) => {
 
 // Publer API proxy endpoint
 app.post('/api/publish', async (req, res) => {
-  const { apiKey, post, socialAccountId } = req.body;
+  const { workspaceId, post } = req.body;
+
+  // Publer key and account choices come from the workspace's server-side settings
+  const secrets = workspaceId ? await getWorkspaceSecrets(workspaceId) : {};
+  const apiKey = secrets.publer_api_key;
+  const socialAccountId = post?.platform ? secrets.platform_accounts?.[post.platform] : null;
 
   if (!apiKey) {
-    return res.status(400).json({ error: 'API key is required' });
+    return res.status(400).json({ error: NO_PUBLER_KEY });
   }
 
   if (!post) {
@@ -862,10 +924,11 @@ app.post('/api/publish', async (req, res) => {
 
 // Claude API proxy endpoint for content generation
 app.post('/api/generate', async (req, res) => {
-  const { apiKey, topic, pillar, platforms, userId = 'default', workspaceId } = req.body;
+  const { topic, pillar, platforms, userId = 'default', workspaceId } = req.body;
+  const apiKey = claudeApiKey();
 
   if (!apiKey) {
-    return res.status(400).json({ error: 'Claude API key is required' });
+    return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
   if (!topic) {
@@ -989,10 +1052,11 @@ Return ONLY valid JSON in this exact format (no markdown, no code blocks, no exp
 
 // Topic suggestion endpoint
 app.post('/api/suggest-topic', async (req, res) => {
-  const { apiKey, pillar } = req.body;
+  const { pillar } = req.body;
+  const apiKey = claudeApiKey();
 
   if (!apiKey) {
-    return res.status(400).json({ error: 'Claude API key is required' });
+    return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
   const moonbootsContext = `moonboots labs is a consultancy and venture studio ecosystem comprising:
@@ -1101,10 +1165,15 @@ Return ONLY the topic text, nothing else. No quotes, no explanation. Just the to
 
 // Generate optimized image prompt using Claude
 app.post('/api/generate-image-prompt', async (req, res) => {
-  const { apiKey, postContent, platform, style = 'modern professional' } = req.body;
+  const { postContent, platform, style = 'modern professional' } = req.body;
+  const apiKey = claudeApiKey();
 
-  if (!apiKey || !postContent) {
-    return res.status(400).json({ error: 'API key and post content required' });
+  if (!apiKey) {
+    return res.status(503).json({ error: CLAUDE_KEY_MISSING });
+  }
+
+  if (!postContent) {
+    return res.status(400).json({ error: 'Post content required' });
   }
 
   const systemPrompt = `You are an expert at creating image generation prompts for social media posts.
@@ -1163,10 +1232,15 @@ Output ONLY the image prompt, nothing else. No explanations, no preamble.`;
 
 // Generate image using Replicate (Flux Schnell)
 app.post('/api/generate-image', async (req, res) => {
-  const { replicateApiKey, prompt, aspectRatio = '1:1' } = req.body;
+  const { prompt, aspectRatio = '1:1' } = req.body;
+  const replicateKey = replicateApiKey();
 
-  if (!replicateApiKey || !prompt) {
-    return res.status(400).json({ error: 'Replicate API key and prompt required' });
+  if (!replicateKey) {
+    return res.status(503).json({ error: REPLICATE_KEY_MISSING });
+  }
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt required' });
   }
 
   // Map aspect ratios for different platforms
@@ -1185,7 +1259,7 @@ app.post('/api/generate-image', async (req, res) => {
     const startResponse = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${replicateApiKey}`,
+        'Authorization': `Bearer ${replicateKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -1218,7 +1292,7 @@ app.post('/api/generate-image', async (req, res) => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       const pollResponse = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
-        headers: { 'Authorization': `Bearer ${replicateApiKey}` }
+        headers: { 'Authorization': `Bearer ${replicateKey}` }
       });
 
       result = await pollResponse.json();
@@ -1756,22 +1830,12 @@ app.delete('/api/context/stories/:id', async (req, res) => {
   }
 });
 
-// ============ WORKSPACE MANAGEMENT ENDPOINTS (UI) ============
+// ============ WORKSPACE MANAGEMENT ENDPOINTS (UI, admin login) ============
 
 app.get('/api/workspaces', async (req, res) => {
   try {
     const workspaces = await getWorkspaces();
-    // Don't expose api_keys or publer keys in list
-    res.json(workspaces.map(w => ({
-      id: w.id,
-      name: w.name,
-      slug: w.slug,
-      brand_config: w.brand_config,
-      pillars: w.pillars,
-      created_at: w.created_at,
-      has_api_key: !!w.api_key,
-      has_publer_key: !!w.publer_api_key,
-    })));
+    res.json(await Promise.all(workspaces.map(publicWorkspace)));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1781,18 +1845,21 @@ app.get('/api/workspaces/:id', async (req, res) => {
   try {
     const workspace = await getWorkspaceById(req.params.id);
     if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
-    res.json({
-      ...workspace,
-      api_key: workspace.api_key ? `...${workspace.api_key.slice(-8)}` : null,
-    });
+    res.json(await publicWorkspace(workspace));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+// Only brand fields can be edited here. Keys have their own endpoints.
+const EDITABLE_WORKSPACE_FIELDS = ['name', 'brand_config', 'pillars'];
+
 app.put('/api/workspaces/:id', async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
+  const updates = {};
+  for (const field of EDITABLE_WORKSPACE_FIELDS) {
+    if (req.body?.[field] !== undefined) updates[field] = req.body[field];
+  }
 
   // Update in-memory cache
   const idx = workspacesCache.findIndex(w => w.id === id || w.slug === id);
@@ -1808,38 +1875,84 @@ app.put('/api/workspaces/:id', async (req, res) => {
         .upsert({ id, ...updates }, { onConflict: 'id' })
         .select()
         .single();
-      if (!error && data) return res.json(data);
+      if (!error && data) return res.json(await publicWorkspace(data));
     } catch {}
   }
 
   if (idx !== -1) {
-    return res.json(workspacesCache[idx]);
+    return res.json(await publicWorkspace(workspacesCache[idx]));
   }
   res.status(404).json({ error: 'Workspace not found' });
 });
 
-// Generate API key for a workspace
+// Generate API key for a workspace. Only its hash is stored; the key is shown once.
 app.post('/api/workspaces/:id/generate-api-key', async (req, res) => {
-  const { id } = req.params;
-  const crypto = await import('crypto');
-  const newKey = `cs_${crypto.randomBytes(32).toString('hex')}`;
+  const workspace = await getWorkspaceById(req.params.id);
+  if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
 
-  // Update in-memory
-  const idx = workspacesCache.findIndex(w => w.id === id || w.slug === id);
-  if (idx !== -1) {
-    workspacesCache[idx].api_key = newKey;
+  if (envKeyFor(workspace)) {
+    return res.status(409).json({
+      error: `This workspace's API key is set in Railway (${envKeyName(workspace)}). Change it there.`,
+    });
   }
 
-  // Update in Supabase
-  if (supabase) {
-    try {
-      await supabase
-        .from('workspaces')
-        .upsert({ id, api_key: newKey }, { onConflict: 'id' });
-    } catch {}
+  const newKey = `cs_${crypto.randomBytes(32).toString('hex')}`;
+  try {
+    await updateWorkspaceSecrets(workspace.id, { api_key_hash: sha256(newKey), api_key_last4: lastFour(newKey) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 
   res.json({ api_key: newKey });
+});
+
+const PUBLISHING_PLATFORMS = ['linkedin', 'facebook', 'instagram', 'x'];
+
+// Save a workspace's Publer key (checked with Publer first) and account choices.
+// The key is stored on the server only; the browser sees its last 4 characters.
+app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
+  const workspace = await getWorkspaceById(req.params.id);
+  if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+
+  const { publerApiKey, platformAccounts } = req.body || {};
+  const updates = {};
+  let accounts;
+
+  if (typeof publerApiKey === 'string' && publerApiKey.trim()) {
+    const key = publerApiKey.trim();
+    try {
+      const result = await fetchPublerAccounts(key);
+      if (!result.ok) {
+        return res.status(400).json({ error: `Key not saved. ${result.error}`, hint: result.hint });
+      }
+      accounts = result.accounts;
+    } catch (error) {
+      return res.status(502).json({ error: `Key not saved. Could not reach Publer: ${error.message}` });
+    }
+    updates.publer_api_key = key;
+  } else if (publerApiKey === null) {
+    updates.publer_api_key = null;
+  }
+
+  if (platformAccounts !== undefined) {
+    if (!platformAccounts || typeof platformAccounts !== 'object' || Array.isArray(platformAccounts)) {
+      return res.status(400).json({ error: 'platformAccounts must be an object' });
+    }
+    const clean = {};
+    for (const platform of PUBLISHING_PLATFORMS) {
+      const value = platformAccounts[platform];
+      if (value !== undefined && value !== null && value !== '') clean[platform] = String(value);
+    }
+    updates.platform_accounts = clean;
+  }
+
+  try {
+    await updateWorkspaceSecrets(workspace.id, updates);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  res.json({ success: true, workspace: await publicWorkspace(workspace), accounts });
 });
 
 // ============ EXTERNAL API v1 ENDPOINTS (for agents like Marcus) ============
@@ -1861,10 +1974,9 @@ app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
     return res.status(400).json({ error: 'topic is required' });
   }
 
-  // Need Claude API key from workspace settings or env
-  const claudeApiKey = workspace.claude_api_key || process.env.CLAUDE_API_KEY;
-  if (!claudeApiKey) {
-    return res.status(400).json({ error: 'Claude API key not configured for this workspace' });
+  const claudeKey = claudeApiKey();
+  if (!claudeKey) {
+    return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
   const enabledPlatforms = Array.isArray(platforms) ? platforms : [platforms];
@@ -1907,7 +2019,7 @@ Return ONLY valid JSON in this exact format (no markdown, no code blocks, no exp
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': claudeApiKey,
+        'x-api-key': claudeKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -2260,12 +2372,13 @@ async function updatePost(id, updates) {
 
 // Helper: publish a post to Publer using workspace settings
 async function publishToPubler(post, workspace) {
-  const publerApiKey = workspace.publer_api_key;
+  const secrets = await getWorkspaceSecrets(workspace.id);
+  const publerApiKey = secrets.publer_api_key;
   if (!publerApiKey) {
     throw new Error(`No Publer API key configured for workspace "${workspace.name}". Set it in Settings.`);
   }
 
-  const platformAccounts = workspace.platform_accounts || {};
+  const platformAccounts = secrets.platform_accounts || {};
   const socialAccountId = platformAccounts[post.platform];
 
   // Get Publer workspace ID
@@ -2427,51 +2540,11 @@ async function publishToPubler(post, workspace) {
   return { success: true, jobId, publerData: data };
 }
 
-// Sync workspace Publer settings from frontend
-app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
-  const { id } = req.params;
-  const { publerApiKey, platformAccounts } = req.body;
-
-  const idx = workspacesCache.findIndex(w => w.id === id || w.slug === id);
-  if (idx === -1) return res.status(404).json({ error: 'Workspace not found' });
-
-  if (publerApiKey !== undefined) workspacesCache[idx].publer_api_key = publerApiKey;
-  if (platformAccounts !== undefined) workspacesCache[idx].platform_accounts = platformAccounts;
-
-  if (supabase) {
-    try {
-      await supabase.from('workspaces').upsert({
-        id,
-        publer_api_key: workspacesCache[idx].publer_api_key,
-        platform_accounts: workspacesCache[idx].platform_accounts,
-      }, { onConflict: 'id' });
-    } catch {}
-  }
-
-  res.json({ success: true });
-});
-
 // ============ MARCUS CMO ENDPOINTS (POST /api/posts, GET /api/posts) ============
 
-// Optional auth - if Authorization header present, validate it; if not, use source to determine workspace
-function optionalApiKeyAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const apiKey = authHeader.slice(7);
-    getWorkspaceByApiKey(apiKey).then(workspace => {
-      if (!workspace) return res.status(401).json({ error: 'Invalid API key' });
-      req.workspace = workspace;
-      next();
-    }).catch(() => res.status(500).json({ error: 'Auth failed' }));
-  } else {
-    // No auth - determine workspace from source field
-    req.workspace = null;
-    next();
-  }
-}
-
 // POST /api/posts - Marcus submits a post for publishing
-app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
+// Requires the workspace API key (Bearer); see the access control gate above.
+app.post('/api/posts', async (req, res) => {
   const {
     platform,
     content,
@@ -2486,20 +2559,8 @@ app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
     return res.status(400).json({ error: 'platform and content are required' });
   }
 
-  // Determine workspace
-  let workspace = req.workspace;
-  if (!workspace) {
-    // Infer from source
-    if (source === 'marcus-cmo') {
-      workspace = await getWorkspaceById('touchline');
-    } else {
-      workspace = await getWorkspaceById('moonboots');
-    }
-  }
-
-  if (!workspace) {
-    return res.status(400).json({ error: 'Could not determine workspace' });
-  }
+  // The workspace always comes from the API key, never from the "source" field
+  const workspace = req.workspace;
 
   const postId = generatePostId();
   const post = {
@@ -2523,10 +2584,10 @@ app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
 
   // Generate image if requested (async, don't block response)
   if (generateImage) {
-    const claudeApiKey = workspace.claude_api_key || process.env.CLAUDE_API_KEY;
-    const replicateApiKey = workspace.replicate_api_key || process.env.REPLICATE_API_KEY;
+    const claudeKey = claudeApiKey();
+    const replicateKey = replicateApiKey();
 
-    if (claudeApiKey && replicateApiKey) {
+    if (claudeKey && replicateKey) {
       // Run image generation in background
       (async () => {
         try {
@@ -2537,7 +2598,7 @@ app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-api-key': claudeApiKey,
+              'x-api-key': claudeKey,
               'anthropic-version': '2023-06-01',
             },
             body: JSON.stringify({
@@ -2559,7 +2620,7 @@ app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
           const aspectRatio = platform === 'instagram' ? '4:5' : '16:9';
           const startResp = await fetch('https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${replicateApiKey}`, 'Content-Type': 'application/json' },
+            headers: { 'Authorization': `Bearer ${replicateKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ input: { prompt: imagePrompt, aspect_ratio: aspectRatio, output_format: 'webp', output_quality: 90 } }),
           });
           let prediction = await startResp.json();
@@ -2569,7 +2630,7 @@ app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
           while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && attempts < 60) {
             await new Promise(r => setTimeout(r, 1000));
             const pollResp = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-              headers: { 'Authorization': `Bearer ${replicateApiKey}` },
+              headers: { 'Authorization': `Bearer ${replicateKey}` },
             });
             prediction = await pollResp.json();
             attempts++;
@@ -2640,17 +2701,12 @@ app.post('/api/posts', optionalApiKeyAuth, async (req, res) => {
 });
 
 // GET /api/posts - Marcus polls for published posts and metrics
-app.get('/api/posts', optionalApiKeyAuth, async (req, res) => {
+// Requires the workspace API key (Bearer); only that workspace's posts are returned.
+app.get('/api/posts', async (req, res) => {
   const { status, limit = 50, source, platform } = req.query;
 
-  // Determine workspace
-  let workspace = req.workspace;
-  if (!workspace && source === 'marcus-cmo') {
-    workspace = await getWorkspaceById('touchline');
-  }
-
   const filter = {
-    workspace_id: workspace?.id,
+    workspace_id: req.workspace.id,
     status: status || undefined,
     source: source || undefined,
     limit: parseInt(limit) || 50,
@@ -2679,9 +2735,14 @@ app.get('/api/posts', optionalApiKeyAuth, async (req, res) => {
   });
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), supabase: !!supabase });
+// Health check endpoint (public; Touchline HQ checks it)
+app.get('/api/health', async (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    supabase: !!supabase,
+    storage: await storageStatus(),
+  });
 });
 
 // SPA fallback - serve index.html for all other routes
