@@ -9,6 +9,9 @@ import {
 } from './server/auth.js';
 import { createStore } from './server/store.js';
 import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js';
+import * as publer from './server/publer.js';
+import { createPostService, toApiPost, PostError, PLATFORMS } from './server/posts.js';
+import { checkContent, prepareForPublishing } from './shared/brand.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,6 +29,9 @@ const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
 
 // Persistent store for workspace secrets (Supabase table or Railway Volume file)
 const store = createStore(supabase);
+
+// Posts from Touchline HQ and the v1 API, and the scheduler that sends them to Publer
+const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets });
 
 // ============ CONTEXT HELPER FUNCTIONS ============
 
@@ -352,7 +358,7 @@ app.use(express.static(join(__dirname, 'dist')));
 const PUBLIC_API_PATHS = new Set(['/health', '/auth/login', '/auth/logout', '/auth/me']);
 
 function isWorkspaceKeyPath(path) {
-  return path === '/posts' || path === '/posts/' || path.startsWith('/v1/');
+  return path === '/posts' || path.startsWith('/posts/') || path.startsWith('/v1/');
 }
 
 app.use('/api', (req, res, next) => {
@@ -379,7 +385,9 @@ app.get('/api/config', async (req, res) => {
   });
 });
 
-// ============ PUBLER HELPERS ============
+// ============ PUBLER (UI routes, admin login) ============
+
+const NO_PUBLER_KEY = 'No Publer API key saved for this workspace. Paste one in Settings.';
 
 async function getSavedPublerKey(workspaceId) {
   if (!workspaceId) return null;
@@ -387,106 +395,23 @@ async function getSavedPublerKey(workspaceId) {
   return secrets.publer_api_key || null;
 }
 
-const NO_PUBLER_KEY = 'No Publer API key saved for this workspace. Paste one in Settings.';
-const PUBLER_TIMEOUT_MS = 15000;
-
-// Check a Publer key and list the social accounts it can post to
-async function fetchPublerAccounts(apiKey) {
-  const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer-API ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    signal: AbortSignal.timeout(PUBLER_TIMEOUT_MS),
-  });
-
-  const wsText = await wsResponse.text();
-  console.log('Publer workspaces response status:', wsResponse.status);
-
-  if (wsText.trim().startsWith('<')) {
-    const titleMatch = wsText.match(/<title>(.*?)<\/title>/i);
-    const errorTitle = titleMatch ? titleMatch[1] : 'Unknown error';
-    console.error('Publer returned HTML page:', errorTitle);
-    return {
-      ok: false,
-      status: 401,
-      error: `Publer API error: ${errorTitle}. Check your API key format and plan.`,
-      hint: 'API key should be the full key from app.publer.com/settings',
-    };
-  }
-
-  let workspaces;
-  try {
-    workspaces = JSON.parse(wsText);
-  } catch (e) {
-    return { ok: false, status: 502, error: 'Invalid response from Publer' };
-  }
-
-  if (!wsResponse.ok || !workspaces || !workspaces.length) {
-    return { ok: false, status: 401, error: workspaces?.message || 'No workspaces found. Check your API key.' };
-  }
-
-  const publerWorkspaceId = workspaces[0].id;
-
-  const response = await fetch('https://app.publer.com/api/v1/accounts', {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer-API ${apiKey}`,
-      'Publer-Workspace-Id': publerWorkspaceId,
-      'Content-Type': 'application/json',
-    },
-    signal: AbortSignal.timeout(PUBLER_TIMEOUT_MS),
-  });
-
-  const responseText = await response.text();
-  if (responseText.trim().startsWith('<')) {
-    console.error('Publer accounts returned HTML:', responseText.substring(0, 200));
-    return { ok: false, status: 401, error: 'Invalid API key. Publer returned an error page.' };
-  }
-
-  let accounts;
-  try {
-    accounts = JSON.parse(responseText);
-  } catch (parseErr) {
-    return { ok: false, status: 502, error: 'Invalid response from Publer' };
-  }
-
-  if (!response.ok) {
-    return { ok: false, status: response.status, error: accounts.message || accounts.error || 'Failed to connect to Publer' };
-  }
-
-  // Publer may use different field names: social_network, type, network, platform
-  const getAccountPlatform = (acc) => acc.social_network || acc.type || acc.network || acc.platform || 'unknown';
-  const getAccountName = (acc) => acc.name || acc.username || acc.display_name || getAccountPlatform(acc);
-
-  return {
-    ok: true,
-    publerWorkspaceId,
-    accounts: (Array.isArray(accounts) ? accounts : []).map(a => ({
-      id: a.id,
-      platform: getAccountPlatform(a),
-      name: getAccountName(a),
-    })),
-  };
+function sendPublerError(res, error, fallbackMessage) {
+  console.error(fallbackMessage, error.message);
+  res.status(error.status || 500).json({ error: error.message || fallbackMessage, code: error.code, hint: error.hint });
 }
 
 // Publer - Get connected social accounts (uses the workspace's saved key)
 app.post('/api/publer/accounts', async (req, res) => {
   const apiKey = await getSavedPublerKey(req.body?.workspaceId);
   if (!apiKey) {
-    return res.status(400).json({ error: NO_PUBLER_KEY });
+    return res.status(400).json({ error: NO_PUBLER_KEY, code: 'no_key' });
   }
 
   try {
-    const result = await fetchPublerAccounts(apiKey);
-    if (!result.ok) {
-      return res.status(result.status).json({ error: result.error, hint: result.hint });
-    }
-    res.json({ success: true, accounts: result.accounts });
+    const { accounts } = await publer.listAccounts(apiKey);
+    res.json({ success: true, accounts });
   } catch (error) {
-    console.error('Publer accounts failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
+    sendPublerError(res, error, 'Failed to fetch Publer accounts');
   }
 });
 
@@ -494,418 +419,64 @@ app.post('/api/publer/accounts', async (req, res) => {
 app.post('/api/publer/test', async (req, res) => {
   const apiKey = await getSavedPublerKey(req.body?.workspaceId);
   if (!apiKey) {
-    return res.status(400).json({ error: NO_PUBLER_KEY });
+    return res.status(400).json({ error: NO_PUBLER_KEY, code: 'no_key' });
   }
 
   try {
-    const result = await fetchPublerAccounts(apiKey);
-    if (!result.ok) {
-      return res.status(result.status).json({ error: result.error, hint: result.hint });
-    }
+    const { accounts } = await publer.listAccounts(apiKey);
     res.json({
       success: true,
-      accountCount: result.accounts.length,
-      accounts: result.accounts.map(a => `${a.name} (${a.platform})`).join(', ') || 'None',
-      accountsList: result.accounts,
+      accountCount: accounts.length,
+      accounts: accounts.map(a => `${a.name} (${a.kind})`).join(', ') || 'None',
+      accountsList: accounts,
     });
   } catch (error) {
-    console.error('Publer test failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
+    sendPublerError(res, error, 'Publer test failed');
   }
 });
 
-// Publer API proxy endpoint
+// Publish a post approved in the Queue, using the workspace's saved Publer key and accounts
 app.post('/api/publish', async (req, res) => {
   const { workspaceId, post } = req.body;
 
-  // Publer key and account choices come from the workspace's server-side settings
-  const secrets = workspaceId ? await getWorkspaceSecrets(workspaceId) : {};
+  const workspace = workspaceId ? await getWorkspaceById(workspaceId) : null;
+  const secrets = workspace ? await getWorkspaceSecrets(workspace.id) : {};
   const apiKey = secrets.publer_api_key;
-  const socialAccountId = post?.platform ? secrets.platform_accounts?.[post.platform] : null;
 
   if (!apiKey) {
-    return res.status(400).json({ error: NO_PUBLER_KEY });
+    return res.status(400).json({ error: NO_PUBLER_KEY, code: 'no_key' });
   }
 
-  if (!post) {
+  if (!post?.content || !post?.platform) {
     return res.status(400).json({ error: 'Post data is required' });
   }
 
-  // Platform mapping for Publer's platform identifiers
-  // Publer uses: in_profile (LinkedIn), ig_business (Instagram), twitter (X)
-  const platformMatchers = {
-    linkedin: ['linkedin', 'in_profile', 'in_'],
-    facebook: ['facebook', 'fb_page', 'fb_'],
-    instagram: ['instagram', 'ig_business', 'ig_'],
-    x: ['twitter', 'x'],
-  };
-
-  const matchers = platformMatchers[post.platform] || [post.platform];
-
   try {
-    // First get workspace ID
-    const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer-API ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+    const publerWorkspaceId = await publer.getPublerWorkspaceId(apiKey);
+    const accountId = await publer.resolveAccountId(apiKey, publerWorkspaceId, post.platform, secrets.platform_accounts?.[post.platform]);
+    const mediaId = await publer.uploadMedia(apiKey, publerWorkspaceId, post.image);
+    const text = prepareForPublishing(workspace, post);
+
+    // Publer needs a future time; "now" goes out in about a minute
+    const scheduledFor = post.scheduledFor && !Number.isNaN(new Date(post.scheduledFor).getTime()) ? post.scheduledFor : null;
+    const { jobId, data } = await publer.schedulePost(apiKey, publerWorkspaceId, {
+      accountId, platform: post.platform, text, mediaId, scheduledAt: scheduledFor,
     });
 
-    const wsText = await wsResponse.text();
-    if (wsText.trim().startsWith('<')) {
-      return res.status(401).json({
-        error: 'Invalid API key or API access not enabled.',
-        hint: 'Publer API requires Business or Enterprise plan'
-      });
-    }
-
-    let workspaces;
-    try {
-      workspaces = JSON.parse(wsText);
-    } catch (e) {
-      return res.status(500).json({ error: 'Invalid response from Publer' });
-    }
-
-    if (!wsResponse.ok || !workspaces || workspaces.length === 0) {
-      return res.status(401).json({
-        error: workspaces?.message || 'No workspaces found'
-      });
-    }
-
-    const workspaceId = workspaces[0].id;
-
-    // If no socialAccountId provided, try to find one
-    let accountId = socialAccountId;
-
-    if (!accountId) {
-      // Fetch accounts to find matching platform
-      const accountsResponse = await fetch('https://app.publer.com/api/v1/accounts', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer-API ${apiKey}`,
-          'Publer-Workspace-Id': workspaceId,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      // Get response as text first to handle HTML error pages
-      const accountsText = await accountsResponse.text();
-
-      // Check if response is HTML (error page - usually invalid API key)
-      if (accountsText.trim().startsWith('<')) {
-        console.error('Publer accounts API returned HTML:', accountsText.substring(0, 200));
-        return res.status(401).json({
-          error: 'Publer API key appears to be invalid. Please check your API key in Settings.',
-          hint: 'Get your API key from Publer → Settings → API Access'
-        });
-      }
-
-      let accounts;
-      try {
-        accounts = JSON.parse(accountsText);
-      } catch (parseErr) {
-        console.error('Failed to parse Publer accounts response:', accountsText.substring(0, 200));
-        return res.status(500).json({
-          error: 'Invalid response from Publer API',
-        });
-      }
-
-      if (!accountsResponse.ok) {
-        return res.status(accountsResponse.status).json({
-          error: accounts.message || accounts.error || 'Failed to fetch social accounts',
-          details: accounts
-        });
-      }
-
-      // Find account matching platform using matchers
-      const matchingAccount = accounts.find(acc => {
-        const accPlatform = (acc.platform || acc.social_network || acc.type || '').toLowerCase();
-        return matchers.some(m => accPlatform.includes(m.toLowerCase()));
-      });
-
-      if (!matchingAccount) {
-        return res.status(400).json({
-          error: `No ${post.platform} account connected in Publer. Please connect your ${post.platform} account in Publer first.`,
-          availableAccounts: accounts.map(a => ({ id: a.id, platform: a.platform || a.social_network || a.type, name: a.name }))
-        });
-      }
-
-      accountId = matchingAccount.id;
-    }
-
-    // Map platform to Publer network provider
-    const platformToNetwork = {
-      linkedin: 'linkedin',
-      facebook: 'facebook',
-      instagram: 'instagram',
-      x: 'twitter',
-    };
-    const networkProvider = platformToNetwork[post.platform] || post.platform;
-
-    // Handle image upload if present - Publer requires media ID, not URL
-    let mediaId = null;
-    if (post.image && post.image.startsWith('data:')) {
-      // Upload base64 image to Publer's media endpoint using multipart/form-data
-      try {
-        const base64Data = post.image.split(',')[1];
-        const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
-        const extension = mimeType.split('/')[1] || 'png';
-
-        // Convert base64 to buffer
-        const buffer = Buffer.from(base64Data, 'base64');
-
-        // Create form data with the file
-        const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-        const filename = `image_${Date.now()}.${extension}`;
-
-        const bodyParts = [
-          `--${boundary}\r\n`,
-          `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`,
-          `Content-Type: ${mimeType}\r\n\r\n`,
-        ];
-
-        const bodyStart = Buffer.from(bodyParts.join(''));
-        const bodyEnd = Buffer.from(`\r\n--${boundary}--\r\n`);
-        const body = Buffer.concat([bodyStart, buffer, bodyEnd]);
-
-        console.log('Uploading media to Publer (multipart)...');
-        const uploadResponse = await fetch('https://app.publer.com/api/v1/media', {
-          method: 'POST',
-          headers: {
-            'Content-Type': `multipart/form-data; boundary=${boundary}`,
-            'Authorization': `Bearer-API ${apiKey}`,
-            'Publer-Workspace-Id': workspaceId,
-          },
-          body: body,
-        });
-
-        const uploadText = await uploadResponse.text();
-        console.log('Media upload response:', uploadText.substring(0, 500));
-
-        // Check if response is HTML (error page)
-        if (uploadText.trim().startsWith('<')) {
-          console.error('Publer media upload returned HTML error');
-          // Continue without image
-        } else {
-          try {
-            const uploadData = JSON.parse(uploadText);
-            if (uploadResponse.ok && uploadData.id) {
-              mediaId = uploadData.id;
-              console.log('Media uploaded successfully, ID:', mediaId);
-            } else {
-              console.error('Publer media upload failed:', uploadData);
-            }
-          } catch (parseErr) {
-            console.error('Failed to parse media upload response:', uploadText.substring(0, 200));
-          }
-        }
-      } catch (uploadError) {
-        console.error('Media upload error:', uploadError);
-        // Continue without image
-      }
-    } else if (post.image) {
-      // Upload from URL using Publer's from-url endpoint
-      try {
-        console.log('Uploading media from URL to Publer...');
-        const uploadResponse = await fetch('https://app.publer.com/api/v1/media/from-url', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer-API ${apiKey}`,
-            'Publer-Workspace-Id': workspaceId,
-          },
-          body: JSON.stringify({ url: post.image }),
-        });
-
-        const uploadText = await uploadResponse.text();
-        console.log('Media from-url response:', uploadText.substring(0, 500));
-
-        if (!uploadText.trim().startsWith('<')) {
-          const uploadData = JSON.parse(uploadText);
-          if (uploadResponse.ok && uploadData.id) {
-            mediaId = uploadData.id;
-            console.log('Media uploaded from URL, ID:', mediaId);
-          }
-        }
-      } catch (uploadError) {
-        console.error('Media from-url error:', uploadError);
-      }
-    }
-
-    // Build network-specific content
-    const networkContent = {
-      type: mediaId ? 'photo' : 'status',
-      text: post.content,
-    };
-
-    // Add media array with ID if we have it (Publer format)
-    if (mediaId) {
-      networkContent.media = [{ id: mediaId, type: 'photo' }];
-    }
-
-    // Build account entry with optional scheduling
-    const accountEntry = {
-      id: accountId,
-    };
-    if (post.scheduledFor) {
-      accountEntry.scheduled_at = new Date(post.scheduledFor).toISOString();
-    }
-
-    // Build the correct Publer bulk payload format
-    const payload = {
-      bulk: {
-        state: post.scheduledFor ? 'scheduled' : 'scheduled', // scheduled for both (immediate posts also use scheduled with current time)
-        posts: [
-          {
-            networks: {
-              [networkProvider]: networkContent,
-            },
-            accounts: [accountEntry],
-          },
-        ],
-      },
-    };
-
-    // If no scheduled time, schedule for 1 minute from now (Publer requires future time)
-    if (!post.scheduledFor) {
-      const oneMinuteFromNow = new Date(Date.now() + 60 * 1000).toISOString();
-      payload.bulk.posts[0].accounts[0].scheduled_at = oneMinuteFromNow;
-    }
-
-    console.log('Publer payload:', JSON.stringify(payload, null, 2));
-    console.log('Publishing to Publer with workspaceId:', workspaceId, 'accountId:', accountId);
-
-    const postUrl = 'https://app.publer.com/api/v1/posts/schedule';
-    const postHeaders = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer-API ${apiKey}`,
-      'Publer-Workspace-Id': workspaceId,
-    };
-
-    console.log('POST URL:', postUrl);
-
-    const response = await fetch(postUrl, {
-      method: 'POST',
-      headers: postHeaders,
-      body: JSON.stringify(payload),
-    });
-
-    // Handle potential HTML error responses
-    const responseText = await response.text();
-    console.log('Publer response status:', response.status);
-    console.log('Publer response:', responseText.substring(0, 500));
-
-    // Check if response is HTML (error page)
-    if (responseText.trim().startsWith('<')) {
-      console.error('Publer API returned HTML error page');
-      return res.status(500).json({
-        error: 'Publer API returned an error page. Please check your API key and try again.',
-        hint: 'Your Publer API key may be invalid or expired.',
-        debug: `Status: ${response.status}`
-      });
-    }
-
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseErr) {
-      console.error('Failed to parse Publer response:', responseText.substring(0, 200));
-      return res.status(500).json({
-        error: 'Invalid response from Publer API',
-        raw: responseText.substring(0, 200)
-      });
-    }
-
-    if (!response.ok) {
-      console.error('Publer API error:', data);
-      return res.status(response.status).json({
-        error: data.message || data.error || JSON.stringify(data) || 'Failed to publish to Publer',
-        details: data
-      });
-    }
-
-    // Publer returns a job_id for async operations - poll for completion
-    const jobId = data.job_id;
     if (!jobId) {
-      console.log('No job_id returned, assuming immediate success:', data);
       return res.json({ success: true, data, status: 'completed' });
     }
 
-    console.log('Got job_id:', jobId, '- polling for completion...');
-
-    // Poll job status (max 30 seconds, check every 2 seconds)
-    let jobComplete = false;
-    let jobResult = null;
-    let attempts = 0;
-    const maxAttempts = 15;
-
-    while (!jobComplete && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-      attempts++;
-
-      try {
-        const statusResponse = await fetch(`https://app.publer.com/api/v1/job_status/${jobId}`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer-API ${apiKey}`,
-            'Publer-Workspace-Id': workspaceId,
-          },
-        });
-
-        const statusText = await statusResponse.text();
-        console.log(`Job status attempt ${attempts}:`, statusText.substring(0, 300));
-
-        if (!statusText.trim().startsWith('<')) {
-          jobResult = JSON.parse(statusText);
-
-          // Check if job is complete (status might be 'complete', 'done', 'failed', etc.)
-          if (jobResult.status === 'complete' || jobResult.status === 'done' ||
-              jobResult.status === 'failed' || jobResult.status === 'error' ||
-              jobResult.done === true || jobResult.complete === true) {
-            jobComplete = true;
-          }
-
-          // Also check for payload with results
-          if (jobResult.payload && (jobResult.payload.posts || jobResult.payload.errors)) {
-            jobComplete = true;
-          }
-        }
-      } catch (pollError) {
-        console.error('Job polling error:', pollError);
-      }
+    const job = await publer.waitForJob(apiKey, publerWorkspaceId, jobId);
+    if (job.failed) {
+      return res.status(400).json({ error: job.error, details: job.result });
     }
-
-    if (!jobComplete) {
-      console.log('Job polling timed out, returning pending status');
-      return res.json({
-        success: true,
-        data,
-        jobId,
-        status: 'pending',
-        message: 'Post scheduled - check Publer for status'
-      });
+    if (!job.done) {
+      return res.json({ success: true, data, jobId, status: 'pending', message: 'Post scheduled - check Publer for status' });
     }
-
-    // Check if job failed
-    if (jobResult?.status === 'failed' || jobResult?.status === 'error' ||
-        jobResult?.payload?.errors?.length > 0) {
-      const errorMsg = jobResult?.payload?.errors?.[0]?.message ||
-                       jobResult?.error ||
-                       jobResult?.message ||
-                       'Post failed in Publer';
-      console.error('Publer job failed:', jobResult);
-      return res.status(400).json({
-        error: errorMsg,
-        details: jobResult
-      });
-    }
-
-    console.log('Job completed successfully:', jobResult);
-    res.json({ success: true, data: jobResult, jobId, status: 'completed' });
+    res.json({ success: true, data: job.result, jobId, status: 'completed' });
   } catch (error) {
-    console.error('Publer publish failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to connect to Publer' });
+    sendPublerError(res, error, 'Publer publish failed');
   }
 });
 
@@ -1480,8 +1051,6 @@ app.post('/api/workspaces/:id/generate-api-key', async (req, res) => {
   res.json({ api_key: newKey });
 });
 
-const PUBLISHING_PLATFORMS = ['linkedin', 'facebook', 'instagram', 'x'];
-
 // Save a workspace's Publer key (checked with Publer first) and account choices.
 // The key is stored on the server only; the browser sees its last 4 characters.
 app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
@@ -1495,15 +1064,18 @@ app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
   if (typeof publerApiKey === 'string' && publerApiKey.trim()) {
     const key = publerApiKey.trim();
     try {
-      const result = await fetchPublerAccounts(key);
-      if (!result.ok) {
-        return res.status(400).json({ error: `Key not saved. ${result.error}`, hint: result.hint });
-      }
-      accounts = result.accounts;
+      ({ accounts } = await publer.listAccounts(key));
     } catch (error) {
-      return res.status(502).json({ error: `Key not saved. Could not reach Publer: ${error.message}` });
+      return res.status(error.status || 502).json({ error: `Key not saved. ${error.message}`, code: error.code, hint: error.hint });
     }
     updates.publer_api_key = key;
+
+    // Keep account choices that still exist under the new key
+    const secrets = await getWorkspaceSecrets(workspace.id);
+    const available = new Set(accounts.map(a => a.id));
+    updates.platform_accounts = Object.fromEntries(
+      Object.entries(secrets.platform_accounts || {}).filter(([, id]) => available.has(String(id))),
+    );
   } else if (publerApiKey === null) {
     updates.publer_api_key = null;
   }
@@ -1513,7 +1085,7 @@ app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
       return res.status(400).json({ error: 'platformAccounts must be an object' });
     }
     const clean = {};
-    for (const platform of PUBLISHING_PLATFORMS) {
+    for (const platform of PLATFORMS) {
       const value = platformAccounts[platform];
       if (value !== undefined && value !== null && value !== '') clean[platform] = String(value);
     }
@@ -1526,21 +1098,36 @@ app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
+  // Posts waiting for a working key get another go straight away
+  if (updates.publer_api_key) postService.runChecks();
+
   res.json({ success: true, workspace: await publicWorkspace(workspace), accounts });
 });
 
-// ============ EXTERNAL API v1 ENDPOINTS (for agents like Marcus) ============
+// ============ EXTERNAL API v1 ENDPOINTS (workspace API key) ============
+// Posts made here wait for approval in Content Studio; they never publish by themselves.
+
+// Next posting slot per platform (UK time), or the given time for all platforms
+async function scheduleTimes(workspace, platforms, schedule) {
+  const times = {};
+  for (const platform of platforms) {
+    if (schedule === 'auto') {
+      times[platform] = (await postService.nextSlotFor(workspace, platform)).toISOString();
+    } else if (schedule && schedule !== 'now' && !Number.isNaN(new Date(schedule).getTime())) {
+      times[platform] = new Date(schedule).toISOString();
+    }
+  }
+  return times;
+}
 
 // Generate content via API
-app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
+app.post('/api/v1/content/generate', async (req, res) => {
   const workspace = req.workspace;
   const {
     topic,
     content_pillar,
     platforms = ['linkedin', 'x', 'instagram'],
     schedule = 'auto',
-    include_image = false,
-    image_style = 'modern professional',
     brand_voice,
   } = req.body;
 
@@ -1552,7 +1139,10 @@ app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
     return res.status(503).json({ error: CLAUDE_KEY_MISSING });
   }
 
-  const enabledPlatforms = (Array.isArray(platforms) ? platforms : [platforms]).filter(p => typeof p === 'string' && p);
+  const enabledPlatforms = (Array.isArray(platforms) ? platforms : [platforms]).filter(p => PLATFORMS.includes(p));
+  if (enabledPlatforms.length === 0) {
+    return res.status(400).json({ error: `platforms must include one of: ${PLATFORMS.join(', ')}` });
+  }
 
   try {
     let { systemPrompt } = await systemPromptFor(workspace, content_pillar);
@@ -1569,62 +1159,22 @@ app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
       schema: postsSchema(enabledPlatforms),
     });
 
-    // Calculate scheduled times
-    const scheduledTimes = {};
-    const freq = workspace.brand_config?.posting_frequency;
-    if (schedule === 'auto' && freq) {
-      const now = new Date();
-      enabledPlatforms.forEach(p => {
-        const pFreq = freq[p === 'twitter' ? 'x' : p];
-        if (pFreq?.hours?.length && pFreq?.days?.length) {
-          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-          for (let d = 0; d < 14; d++) {
-            const checkDate = new Date(now);
-            checkDate.setDate(checkDate.getDate() + d);
-            const dayName = dayNames[checkDate.getDay()];
-            if (pFreq.days.includes(dayName)) {
-              for (const hour of pFreq.hours) {
-                const slotDate = new Date(checkDate);
-                slotDate.setHours(hour, 0, 0, 0);
-                if (slotDate > now) {
-                  scheduledTimes[p] = slotDate.toISOString();
-                  break;
-                }
-              }
-              if (scheduledTimes[p]) break;
-            }
-          }
-        }
-      });
-    } else if (schedule !== 'auto' && schedule !== 'now') {
-      // Use provided datetime for all platforms
-      enabledPlatforms.forEach(p => { scheduledTimes[p] = schedule; });
-    }
-
-    // Build post records
-    const postRecords = enabledPlatforms.map(p => ({
-      id: `${Date.now()}_${p}`,
-      workspace_id: workspace.id,
-      platform: p,
-      content: parsedContent[p],
-      pillar: content_pillar || null,
-      status: 'queued',
-      scheduled_for: scheduledTimes[p] || null,
-      created_at: new Date().toISOString(),
-    }));
-
-    // Store in Supabase if available
-    if (supabase) {
-      try {
-        await supabase.from('posts').insert(postRecords);
-      } catch (e) {
-        console.error('Failed to store posts in Supabase:', e);
-      }
+    const scheduledTimes = await scheduleTimes(workspace, enabledPlatforms, schedule);
+    const posts = [];
+    for (const platform of enabledPlatforms) {
+      posts.push(await postService.createDraft(workspace, {
+        platform,
+        content: parsedContent[platform],
+        pillar: content_pillar || null,
+        source: 'api-v1',
+        status: 'queued',
+        scheduled_for: scheduledTimes[platform] || null,
+      }));
     }
 
     res.json({
       success: true,
-      posts: postRecords.map(p => ({
+      posts: posts.map(p => ({
         id: p.id,
         platform: p.platform,
         content: p.content,
@@ -1641,7 +1191,7 @@ app.post('/api/v1/content/generate', authenticateApiKey, async (req, res) => {
 });
 
 // Submit pre-written content via API
-app.post('/api/v1/content/submit', authenticateApiKey, async (req, res) => {
+app.post('/api/v1/content/submit', async (req, res) => {
   const workspace = req.workspace;
   const {
     platforms = ['linkedin'],
@@ -1655,106 +1205,74 @@ app.post('/api/v1/content/submit', authenticateApiKey, async (req, res) => {
     return res.status(400).json({ error: 'content is required (object with platform keys or string for all platforms)' });
   }
 
-  const enabledPlatforms = Array.isArray(platforms) ? platforms : [platforms];
+  const enabledPlatforms = (Array.isArray(platforms) ? platforms : [platforms]).filter(p => PLATFORMS.includes(p));
+  if (enabledPlatforms.length === 0) {
+    return res.status(400).json({ error: `platforms must include one of: ${PLATFORMS.join(', ')}` });
+  }
 
   // Normalize content - can be string (same for all) or object per platform
   const contentMap = typeof content === 'string'
     ? Object.fromEntries(enabledPlatforms.map(p => [p, content]))
     : content;
 
-  // Calculate scheduled times
-  const scheduledTimes = {};
-  const freq = workspace.brand_config?.posting_frequency;
-  if (schedule === 'auto' && freq) {
-    const now = new Date();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    enabledPlatforms.forEach(p => {
-      const pFreq = freq[p === 'twitter' ? 'x' : p];
-      if (pFreq?.hours?.length && pFreq?.days?.length) {
-        for (let d = 0; d < 14; d++) {
-          const checkDate = new Date(now);
-          checkDate.setDate(checkDate.getDate() + d);
-          const dayName = dayNames[checkDate.getDay()];
-          if (pFreq.days.includes(dayName)) {
-            for (const hour of pFreq.hours) {
-              const slotDate = new Date(checkDate);
-              slotDate.setHours(hour, 0, 0, 0);
-              if (slotDate > now) {
-                scheduledTimes[p] = slotDate.toISOString();
-                break;
-              }
-            }
-            if (scheduledTimes[p]) break;
-          }
-        }
-      }
-    });
-  } else if (schedule !== 'auto' && schedule !== 'now') {
-    enabledPlatforms.forEach(p => { scheduledTimes[p] = schedule; });
-  }
-
-  const postRecords = enabledPlatforms.map(p => ({
-    id: `${Date.now()}_${p}`,
-    workspace_id: workspace.id,
-    platform: p,
-    content: contentMap[p] || contentMap[enabledPlatforms[0]],
-    image: image_url || null,
-    status: approval_required ? 'pending' : 'queued',
-    scheduled_for: scheduledTimes[p] || null,
-    created_at: new Date().toISOString(),
-  }));
-
-  // Store in Supabase if available
-  if (supabase) {
-    try {
-      await supabase.from('posts').insert(postRecords);
-    } catch (e) {
-      console.error('Failed to store submitted posts:', e);
+  try {
+    const scheduledTimes = await scheduleTimes(workspace, enabledPlatforms, schedule);
+    const posts = [];
+    for (const platform of enabledPlatforms) {
+      posts.push(await postService.createDraft(workspace, {
+        platform,
+        content: contentMap[platform] || contentMap[enabledPlatforms[0]],
+        image: image_url || null,
+        source: 'api-v1',
+        status: approval_required ? 'pending' : 'queued',
+        scheduled_for: scheduledTimes[platform] || null,
+      }));
     }
-  }
 
-  res.json({
-    success: true,
-    posts: postRecords.map(p => ({
-      id: p.id,
-      platform: p.platform,
-      content: p.content,
-      status: p.status,
-      scheduled_for: p.scheduled_for,
-    })),
-  });
+    res.json({
+      success: true,
+      posts: posts.map(p => ({
+        id: p.id,
+        platform: p.platform,
+        content: p.content,
+        status: p.status,
+        scheduled_for: p.scheduled_for,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Get queue for workspace
-app.get('/api/v1/content/queue', authenticateApiKey, async (req, res) => {
-  const workspace = req.workspace;
+app.get('/api/v1/content/queue', async (req, res) => {
   const { status, platform } = req.query;
-
-  if (supabase) {
-    try {
-      let query = supabase
-        .from('posts')
-        .select('*')
-        .eq('workspace_id', workspace.id)
-        .order('created_at', { ascending: false });
-
-      if (status) query = query.eq('status', status);
-      if (platform) query = query.eq('platform', platform);
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return res.json({ posts: data || [] });
-    } catch (e) {
-      return res.status(500).json({ error: e.message });
-    }
+  try {
+    const posts = await postService.list({ workspaceId: req.workspace.id, status, platform });
+    res.json({
+      posts: posts.map(p => ({
+        id: p.id,
+        workspace_id: p.workspace_id,
+        platform: p.platform,
+        content: p.content,
+        pillar: p.pillar || null,
+        image: p.image ? `/api/posts/${p.id}/image` : null,
+        status: p.status,
+        source: p.source || null,
+        scheduled_for: p.scheduled_for || null,
+        published_at: p.published_at || null,
+        post_url: p.post_url || null,
+        error: p.error || null,
+        created_at: p.created_at,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-
-  // No Supabase - return empty (UI-only posts are in localStorage)
-  res.json({ posts: [], note: 'Supabase not configured - posts are stored in browser only' });
 });
 
 // Get analytics for workspace
-app.get('/api/v1/content/analytics', authenticateApiKey, async (req, res) => {
+app.get('/api/v1/content/analytics', async (req, res) => {
   const workspace = req.workspace;
   const { period = '7d', platform = 'all' } = req.query;
 
@@ -1806,386 +1324,114 @@ app.get('/api/v1/content/analytics', authenticateApiKey, async (req, res) => {
   });
 });
 
-// Delete a scheduled post
-app.delete('/api/v1/content/:id', authenticateApiKey, async (req, res) => {
-  const workspace = req.workspace;
-  const { id } = req.params;
-
-  if (supabase) {
-    try {
-      const { error } = await supabase
-        .from('posts')
-        .delete()
-        .eq('id', id)
-        .eq('workspace_id', workspace.id);
-
-      if (error) throw error;
-      return res.json({ success: true });
-    } catch (e) {
-      return res.status(500).json({ error: e.message });
-    }
-  }
-
-  res.json({ success: true, note: 'Supabase not configured - post may still exist in browser' });
-});
-
-// ============ MARCUS (CMO) POST STORE ============
-
-// In-memory post store (Supabase-backed when available)
-const postsStore = [];
-
-function generatePostId() {
-  return 'post_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-async function savePost(post) {
-  postsStore.push(post);
-
-  if (supabase) {
-    try {
-      await supabase.from('posts').insert(post);
-    } catch (e) {
-      console.error('Failed to save post to Supabase:', e);
-    }
-  }
-
-  return post;
-}
-
-async function getPosts(filter = {}) {
-  if (supabase) {
-    try {
-      let query = supabase.from('posts').select('*').order('created_at', { ascending: false });
-      if (filter.status) query = query.eq('status', filter.status);
-      if (filter.workspace_id) query = query.eq('workspace_id', filter.workspace_id);
-      if (filter.source) query = query.eq('source', filter.source);
-      if (filter.limit) query = query.limit(filter.limit);
-      const { data } = await query;
-      if (data?.length) return data;
-    } catch {}
-  }
-
-  // Fall back to in-memory
-  let results = [...postsStore];
-  if (filter.workspace_id) results = results.filter(p => p.workspace_id === filter.workspace_id);
-  if (filter.status) results = results.filter(p => p.status === filter.status);
-  if (filter.source) results = results.filter(p => p.source === filter.source);
-  results.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  if (filter.limit) results = results.slice(0, filter.limit);
-  return results;
-}
-
-async function updatePost(id, updates) {
-  const idx = postsStore.findIndex(p => p.id === id);
-  if (idx !== -1) {
-    postsStore[idx] = { ...postsStore[idx], ...updates };
-  }
-
-  if (supabase) {
-    try {
-      await supabase.from('posts').update(updates).eq('id', id);
-    } catch {}
-  }
-}
-
-// Helper: publish a post to Publer using workspace settings
-async function publishToPubler(post, workspace) {
-  const secrets = await getWorkspaceSecrets(workspace.id);
-  const publerApiKey = secrets.publer_api_key;
-  if (!publerApiKey) {
-    throw new Error(`No Publer API key configured for workspace "${workspace.name}". Set it in Settings.`);
-  }
-
-  const platformAccounts = secrets.platform_accounts || {};
-  const socialAccountId = platformAccounts[post.platform];
-
-  // Get Publer workspace ID
-  const wsResponse = await fetch('https://app.publer.com/api/v1/workspaces', {
-    headers: { 'Authorization': `Bearer-API ${publerApiKey}`, 'Content-Type': 'application/json' },
-  });
-  const wsText = await wsResponse.text();
-  if (wsText.trim().startsWith('<') || !wsResponse.ok) {
-    throw new Error('Invalid Publer API key');
-  }
-  const workspaces = JSON.parse(wsText);
-  if (!workspaces?.length) throw new Error('No Publer workspaces found');
-  const publerWorkspaceId = workspaces[0].id;
-
-  // Resolve account ID
-  let accountId = socialAccountId;
-  if (!accountId) {
-    // Auto-match by platform
-    const platformMatchers = {
-      linkedin: ['linkedin', 'in_profile', 'in_page', 'in_'],
-      facebook: ['facebook', 'fb_page', 'fb_'],
-      instagram: ['instagram', 'ig_business', 'ig_'],
-      x: ['twitter', 'x'],
-    };
-    const matchers = platformMatchers[post.platform] || [post.platform];
-
-    const accountsResp = await fetch('https://app.publer.com/api/v1/accounts', {
-      headers: {
-        'Authorization': `Bearer-API ${publerApiKey}`,
-        'Publer-Workspace-Id': publerWorkspaceId,
-        'Content-Type': 'application/json',
-      },
-    });
-    const accounts = await accountsResp.json();
-    const match = accounts.find(acc => {
-      const p = (acc.platform || acc.social_network || acc.type || '').toLowerCase();
-      return matchers.some(m => p.includes(m.toLowerCase()));
-    });
-    if (!match) throw new Error(`No ${post.platform} account found in Publer`);
-    accountId = match.id;
-  }
-
-  // Map platform to Publer network
-  const platformToNetwork = { linkedin: 'linkedin', facebook: 'facebook', instagram: 'instagram', x: 'twitter' };
-  const networkProvider = platformToNetwork[post.platform] || post.platform;
-
-  // Handle image upload if present
-  let mediaId = null;
-  if (post.image) {
-    if (post.image.startsWith('data:')) {
-      const base64Data = post.image.split(',')[1];
-      const mimeType = post.image.split(';')[0].split(':')[1] || 'image/png';
-      const ext = mimeType.split('/')[1] || 'png';
-      const buffer = Buffer.from(base64Data, 'base64');
-      const boundary = '----FormBoundary' + Math.random().toString(36).slice(2);
-      const bodyStart = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="image.${ext}"\r\nContent-Type: ${mimeType}\r\n\r\n`);
-      const bodyEnd = Buffer.from(`\r\n--${boundary}--\r\n`);
-      const body = Buffer.concat([bodyStart, buffer, bodyEnd]);
-
-      const uploadResp = await fetch('https://app.publer.com/api/v1/media', {
-        method: 'POST',
-        headers: {
-          'Content-Type': `multipart/form-data; boundary=${boundary}`,
-          'Authorization': `Bearer-API ${publerApiKey}`,
-          'Publer-Workspace-Id': publerWorkspaceId,
-        },
-        body,
-      });
-      const uploadText = await uploadResp.text();
-      if (!uploadText.trim().startsWith('<')) {
-        const uploadData = JSON.parse(uploadText);
-        if (uploadResp.ok && uploadData.id) mediaId = uploadData.id;
-      }
-    } else {
-      // URL image
-      try {
-        const uploadResp = await fetch('https://app.publer.com/api/v1/media/from-url', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer-API ${publerApiKey}`,
-            'Publer-Workspace-Id': publerWorkspaceId,
-          },
-          body: JSON.stringify({ url: post.image }),
-        });
-        const uploadText = await uploadResp.text();
-        if (!uploadText.trim().startsWith('<')) {
-          const uploadData = JSON.parse(uploadText);
-          if (uploadResp.ok && uploadData.id) mediaId = uploadData.id;
-        }
-      } catch (e) {
-        console.error('Media URL upload failed:', e);
-      }
-    }
-  }
-
-  // Build payload
-  const networkContent = { type: mediaId ? 'photo' : 'status', text: post.content };
-  if (mediaId) networkContent.media = [{ id: mediaId, type: 'photo' }];
-
-  const accountEntry = { id: accountId };
-  if (post.scheduledFor) {
-    accountEntry.scheduled_at = new Date(post.scheduledFor).toISOString();
-  } else {
-    accountEntry.scheduled_at = new Date(Date.now() + 60 * 1000).toISOString();
-  }
-
-  const payload = {
-    bulk: {
-      state: 'scheduled',
-      posts: [{ networks: { [networkProvider]: networkContent }, accounts: [accountEntry] }],
-    },
-  };
-
-  console.log(`[Marcus] Publishing to ${post.platform} via Publer, account: ${accountId}`);
-  const response = await fetch('https://app.publer.com/api/v1/posts/schedule', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer-API ${publerApiKey}`,
-      'Publer-Workspace-Id': publerWorkspaceId,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const respText = await response.text();
-  if (respText.trim().startsWith('<')) throw new Error('Publer returned error page');
-  const data = JSON.parse(respText);
-  if (!response.ok) throw new Error(data.message || data.error || 'Publer publish failed');
-
-  // Poll job status
-  const jobId = data.job_id;
-  if (jobId) {
-    let attempts = 0;
-    while (attempts < 15) {
-      await new Promise(r => setTimeout(r, 2000));
-      attempts++;
-      try {
-        const statusResp = await fetch(`https://app.publer.com/api/v1/job_status/${jobId}`, {
-          headers: { 'Authorization': `Bearer-API ${publerApiKey}`, 'Publer-Workspace-Id': publerWorkspaceId },
-        });
-        const statusText = await statusResp.text();
-        if (!statusText.trim().startsWith('<')) {
-          const result = JSON.parse(statusText);
-          if (result.status === 'complete' || result.status === 'done' || result.done === true ||
-              (result.payload && (result.payload.posts || result.payload.errors))) {
-            if (result.status === 'failed' || result.payload?.errors?.length) {
-              throw new Error(result.payload?.errors?.[0]?.message || 'Publer job failed');
-            }
-            return { success: true, jobId, publerData: result };
-          }
-        }
-      } catch (e) {
-        if (e.message.includes('failed')) throw e;
-      }
-    }
-  }
-
-  return { success: true, jobId, publerData: data };
-}
-
-// ============ MARCUS CMO ENDPOINTS (POST /api/posts, GET /api/posts) ============
-
-// POST /api/posts - Marcus submits a post for publishing
-// Requires the workspace API key (Bearer); see the access control gate above.
-app.post('/api/posts', async (req, res) => {
-  const {
-    platform,
-    content,
-    pillar,
-    generateImage = false,
-    imageStyle,
-    scheduleFor,
-    source = 'unknown',
-  } = req.body;
-
-  if (!platform || !content) {
-    return res.status(400).json({ error: 'platform and content are required' });
-  }
-
-  // The workspace always comes from the API key, never from the "source" field
-  const workspace = req.workspace;
-
-  const postId = generatePostId();
-  const post = {
-    id: postId,
-    workspace_id: workspace.id,
-    platform,
-    content,
-    pillar: pillar || null,
-    image: null,
-    status: 'queued',
-    source,
-    scheduled_for: scheduleFor || null,
-    publer_job_id: null,
-    published_at: null,
-    metrics: null,
-    created_at: new Date().toISOString(),
-  };
-
-  await savePost(post);
-  console.log(`[Marcus] Post ${postId} created for ${workspace.name} on ${platform}`);
-
-  // If scheduleFor is set, queue for later; otherwise try to publish now
-  if (scheduleFor) {
-    await updatePost(postId, { status: 'scheduled', scheduled_for: scheduleFor });
-    return res.json({
-      id: postId,
-      status: 'scheduled',
-      platform,
-      publishedAt: null,
-    });
-  }
-
-  // Attempt immediate publish
+// Delete a post (a post already scheduled in Publer is removed from Publer first)
+app.delete('/api/v1/content/:id', async (req, res) => {
   try {
-    // Wait a moment for image generation if requested (max 30s)
-    if (generateImage) {
-      let waited = 0;
-      while (waited < 30000) {
-        await new Promise(r => setTimeout(r, 2000));
-        waited += 2000;
-        const current = postsStore.find(p => p.id === postId);
-        if (current?.image) break;
-      }
+    const post = await postService.getForWorkspace(req.workspace.id, req.params.id);
+    if (post.status === 'scheduled') {
+      await postService.cancel(req.workspace, post.id);
     }
-
-    const currentPost = postsStore.find(p => p.id === postId) || post;
-    const result = await publishToPubler(currentPost, workspace);
-
-    await updatePost(postId, {
-      status: 'published',
-      published_at: new Date().toISOString(),
-      publer_job_id: result.jobId || null,
-    });
-
-    return res.json({
-      id: postId,
-      status: 'published',
-      platform,
-      publishedAt: new Date().toISOString(),
-    });
-  } catch (pubError) {
-    console.error(`[Marcus] Publish failed for ${postId}:`, pubError.message);
-    await updatePost(postId, { status: 'failed', error: pubError.message });
-    return res.json({
-      id: postId,
-      status: 'queued',
-      platform,
-      publishedAt: null,
-      error: pubError.message,
-    });
+    await postService.remove(post.id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
-// GET /api/posts - Marcus polls for published posts and metrics
-// Requires the workspace API key (Bearer); only that workspace's posts are returned.
+// ============ TOUCHLINE HQ / MARCUS (POST /api/posts, GET /api/posts) ============
+// Marcus's posts are approved in Touchline HQ before they arrive, so they schedule
+// themselves: at scheduleFor if given, otherwise the next posting slot (UK time).
+
+app.post('/api/posts', async (req, res) => {
+  try {
+    const post = await postService.createScheduledPost(req.workspace, req.body);
+    const api = toApiPost(post);
+    res.json({
+      id: api.id,
+      status: api.status,
+      platform: api.platform,
+      publishedAt: api.publishedAt,
+      scheduledFor: api.scheduledFor,
+      platformPostId: api.platformPostId,
+      postUrl: api.postUrl,
+      ...(api.error ? { error: api.error } : {}),
+    });
+  } catch (error) {
+    if (!(error instanceof PostError)) console.error('[posts] Create failed:', error);
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+// Only this key's workspace. status=published returns posts that are live.
 app.get('/api/posts', async (req, res) => {
   const { status, limit = 50, source, platform } = req.query;
-
-  const filter = {
-    workspace_id: req.workspace.id,
-    status: status || undefined,
-    source: source || undefined,
-    limit: parseInt(limit) || 50,
-  };
-
-  const posts = await getPosts(filter);
-
-  // Filter by platform if specified
-  const filtered = platform ? posts.filter(p => p.platform === platform) : posts;
-
-  res.json({
-    posts: filtered.map(p => ({
-      id: p.id,
-      platform: p.platform,
-      content: p.content,
-      pillar: p.pillar,
-      status: p.status,
-      source: p.source,
-      publishedAt: p.published_at || null,
-      scheduledFor: p.scheduled_for || null,
-      image: p.image || null,
-      metrics: p.metrics || { likes: 0, comments: 0, shares: 0 },
-      error: p.error || null,
-      createdAt: p.created_at,
-    })),
-  });
+  try {
+    const posts = await postService.list({
+      workspaceId: req.workspace.id,
+      status: status || undefined,
+      source: source || undefined,
+      platform: platform || undefined,
+      limit: Math.min(Math.max(parseInt(limit) || 50, 1), 500),
+    });
+    res.json({ posts: posts.map(toApiPost) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
+
+// A post's image card
+app.get('/api/posts/:id/image', async (req, res) => {
+  try {
+    const post = await postService.getForWorkspace(req.workspace.id, req.params.id);
+    if (!post.image) return res.status(404).json({ error: 'This post has no image' });
+    if (!post.image.startsWith('data:')) return res.redirect(post.image);
+    const [meta, data] = post.image.split(',');
+    res.type(meta.slice(5).split(';')[0] || 'image/png').send(Buffer.from(data, 'base64'));
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+// ============ SERVER POSTS IN THE QUEUE (UI, admin login) ============
+
+async function workspaceFromParams(req) {
+  const workspace = await getWorkspaceById(req.params.id);
+  if (!workspace) throw new PostError('Workspace not found', 404);
+  return workspace;
+}
+
+function uiPost(workspace, post) {
+  return {
+    ...toApiPost(post),
+    image: post.image || null,
+    imageError: post.image_error || null,
+    autoSchedule: !!post.auto_schedule,
+    warnings: checkContent(workspace.slug, post.content),
+  };
+}
+
+app.get('/api/workspaces/:id/posts', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    const posts = await postService.list({ workspaceId: workspace.id });
+    res.json({ posts: posts.map(p => uiPost(workspace, p)) });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+for (const action of ['cancel', 'approve', 'retry']) {
+  app.post(`/api/workspaces/:id/posts/:postId/${action}`, async (req, res) => {
+    try {
+      const workspace = await workspaceFromParams(req);
+      const post = await postService[action](workspace, req.params.postId, { force: req.body?.force === true });
+      res.json({ post: uiPost(workspace, post) });
+    } catch (error) {
+      if (!(error instanceof PostError)) console.error(`[posts] ${action} failed:`, error.message);
+      res.status(error.status || 500).json({ error: error.message, code: error.code });
+    }
+  });
+}
 
 // Health check endpoint (public; Touchline HQ checks it)
 app.get('/api/health', async (req, res) => {
@@ -2204,4 +1450,5 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  postService.startScheduler();
 });
