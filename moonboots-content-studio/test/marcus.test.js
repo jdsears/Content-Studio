@@ -105,6 +105,11 @@ test('scheduleFor is used when given', async () => {
   assert.equal(post.scheduled_for, when);
 });
 
+test('a scheduleFor without a timezone is read as UK time', async () => {
+  const post = await service.createScheduledPost(workspace, { platform: 'linkedin', content: 'UK time post', scheduleFor: '2030-07-02T08:00' });
+  assert.equal(post.scheduled_for, '2030-07-02T07:00:00.000Z');
+});
+
 test('a post only counts as published once Publer reports it live', async () => {
   let post = await service.createScheduledPost(workspace, { platform: 'linkedin', content: 'Going live soon', source: 'marcus-cmo' });
   assert.equal((await service.list({ workspaceId: 'touchline', status: 'published' })).length, 0);

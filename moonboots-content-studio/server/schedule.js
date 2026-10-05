@@ -48,3 +48,11 @@ export function nextPostingSlot(frequency, { after = new Date(), taken = [], tim
   }
   return null;
 }
+
+// A time without a timezone ("2026-10-12T08:00") is read as UK time; anything else as given
+export function parseUkDateTime(value) {
+  const naive = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/.exec(String(value).trim());
+  if (!naive) return new Date(value);
+  const [year, month, day, hour, minute, second = 0] = naive.slice(1).map(v => Number(v || 0));
+  return new Date(zonedTime(year, month, day, hour).getTime() + minute * 60000 + second * 1000);
+}

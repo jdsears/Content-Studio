@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import * as publer from './publer.js';
 import { PublerError } from './publer.js';
-import { nextPostingSlot } from './schedule.js';
+import { nextPostingSlot, parseUkDateTime } from './schedule.js';
 import { prepareForPublishing } from '../shared/brand.js';
 
 // ============ SERVER-SIDE POSTS (Marcus and other API posts) ============
@@ -143,11 +143,34 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     return { jobId, scheduledAt, accountId, publerPostId, text };
   }
 
+  async function withdrawFromPubler(post, sent) {
+    try {
+      const workspace = await getWorkspaceById(post.workspace_id);
+      const ctx = await publerContext(workspace);
+      let publerPostId = sent.publerPostId;
+      if (!publerPostId) {
+        const scheduled = await publer.listPosts(ctx.apiKey, ctx.publerWorkspaceId, { state: 'scheduled', accountId: sent.accountId, ...searchWindow(sent.scheduledAt) });
+        publerPostId = publer.findMatchingPost(scheduled, { text: sent.text, accountId: sent.accountId })?.id;
+      }
+      if (!publerPostId) throw new Error('not found in Publer');
+      await publer.deletePosts(ctx.apiKey, ctx.publerWorkspaceId, [String(publerPostId)]);
+      return post;
+    } catch (error) {
+      console.error(`[posts] ${post.id} was cancelled while being scheduled and could not be removed from Publer:`, error.message);
+      return save({ ...post, error: 'Cancelled while it was being sent to Publer. Check Publer and delete it there if it is still scheduled.' });
+    }
+  }
+
   // Hand a post to Publer. Temporary problems leave it queued for the next retry.
   async function submit(post) {
     const attempt = { attempts: (post.attempts || 0) + 1, last_attempt_at: nowIso() };
     try {
       const sent = await sendToPubler(post);
+
+      // Cancelled while it was on its way to Publer: take it back out
+      const latest = await get(post.id);
+      if (latest?.status === 'cancelled') return withdrawFromPubler(latest, sent);
+
       console.log(`[posts] ${post.id} scheduled in Publer for ${sent.scheduledAt}`);
       return save({
         ...post,
@@ -248,7 +271,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
 
     let scheduledFor;
     if (scheduleFor) {
-      const when = new Date(scheduleFor);
+      const when = parseUkDateTime(scheduleFor);
       if (Number.isNaN(when.getTime())) {
         throw new PostError('scheduleFor must be a date and time, for example 2026-10-12T08:00:00Z');
       }
