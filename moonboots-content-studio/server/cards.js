@@ -50,7 +50,7 @@ function wrapLines(font, text, size, maxWidth) {
 const textPath = (font, text, x, y, size, fill) =>
   `<path d="${font.getPath(text, x, y, size).toPathData(2)}" fill="${fill}"/>`;
 
-export function touchlineCardSvg({ headline, platform, markColour = TOUCHLINE_COLOURS.green }) {
+export function touchlineCardSvg({ headline, platform, markColour = TOUCHLINE_COLOURS.white }) {
   const { width, height } = CARD_SIZES[platform] || CARD_SIZES.linkedin;
   const { navy, green, white } = TOUCHLINE_COLOURS;
   const unit = Math.min(width, height) / 1080;
@@ -143,6 +143,6 @@ export async function makePostImage(workspace, post) {
   if (workspace.slug !== 'touchline') {
     throw new Error('Image cards are set up for Touchline only.');
   }
-  const markColour = /white/i.test(post.image_style || '') ? TOUCHLINE_COLOURS.white : TOUCHLINE_COLOURS.green;
-  return renderTouchlineCard({ headline: await cardHeadline(post), platform: post.platform, markColour });
+  // The mark is always white now, whatever imageStyle says
+  return renderTouchlineCard({ headline: await cardHeadline(post), platform: post.platform });
 }

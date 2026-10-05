@@ -87,7 +87,7 @@ export default function Graphics() {
                     onClick={() => setStyle(key)}
                     className={cx('rounded-xl border p-1.5 text-left transition', style === key ? 'border-accent/70 ring-2 ring-accent/20' : 'border-line/60 hover:border-line')}
                   >
-                    <span className="block h-12 rounded-lg relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${s.bg[0]}, ${s.bg[1]})` }}>
+                    <span className="block h-12 rounded-lg relative overflow-hidden" style={{ background: s.radial ? `radial-gradient(circle at 50% 46%, ${s.bg[0]}, ${s.bg[1]})` : `linear-gradient(135deg, ${s.bg[0]}, ${s.bg[1]})` }}>
                       <span className="absolute left-2 top-2 w-3 h-3 rounded-full" style={{ backgroundColor: s.mark }} />
                       <span className="absolute left-2 right-4 bottom-4 h-1.5 rounded" style={{ backgroundColor: s.text, opacity: 0.85 }} />
                       <span className="absolute left-2 w-8 bottom-2 h-1 rounded" style={{ backgroundColor: s.footer }} />

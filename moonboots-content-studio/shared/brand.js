@@ -85,9 +85,11 @@ export function prepareForPublishing(workspace, post) {
 
 // ============ TOUCHLINE MARK ============
 
+// The mark is drawn in one colour: white on navy (as in the Touchline app since September 2026).
+// Green is an accent only (rules, links, buttons), never the mark.
 export const TOUCHLINE_COLOURS = { navy: '#08111F', green: '#00FF85', white: '#FFFFFF' };
 
 // The Touchline mark (viewBox 0 0 64 40), coloured with `colour`
-export function touchlineMarkSvg(colour = TOUCHLINE_COLOURS.green) {
+export function touchlineMarkSvg(colour = TOUCHLINE_COLOURS.white) {
   return `<g fill="none" stroke="${colour}" stroke-linecap="round"><path d="M16 32 A16 16 0 0 1 48 32" stroke-width="3.6"/><line x1="6" y1="32" x2="58" y2="32" stroke-width="3.6"/><circle cx="32" cy="32" r="5.6" stroke-width="1.2" opacity="0.32"/></g><circle cx="32" cy="32" r="3.4" fill="${colour}"/>`;
 }

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { renderTouchlineCard, fallbackHeadline, makePostImage, CARD_SIZES } from '../server/cards.js';
+import { renderTouchlineCard, touchlineCardSvg, fallbackHeadline, makePostImage, CARD_SIZES } from '../server/cards.js';
+import { TOUCHLINE_COLOURS, touchlineMarkSvg } from '../shared/brand.js';
 
 test('renders a Touchline card at the right size for each platform', async () => {
   for (const platform of Object.keys(CARD_SIZES)) {
@@ -25,4 +26,12 @@ test('cards are made for Touchline only, and work without a Claude key', async (
   await assert.rejects(makePostImage({ slug: 'moonboots' }, { platform: 'linkedin', content: 'x' }), /Touchline only/);
   const url = await makePostImage({ slug: 'touchline' }, { platform: 'instagram', content: 'Rainy Tuesday session ideas.', image_style: 'white mark' });
   assert.ok(url.startsWith('data:image/png'));
+});
+
+test('the Touchline mark is white, never green (the Touchline app changed it in September 2026)', () => {
+  assert.ok(touchlineMarkSvg().includes(`stroke="${TOUCHLINE_COLOURS.white}"`));
+  assert.ok(!touchlineMarkSvg().includes(TOUCHLINE_COLOURS.green));
+  const svg = touchlineCardSvg({ headline: 'Every child has a plan', platform: 'linkedin' });
+  assert.ok(svg.includes(touchlineMarkSvg(TOUCHLINE_COLOURS.white)), 'card mark is not white');
+  assert.ok(!svg.includes(touchlineMarkSvg(TOUCHLINE_COLOURS.green)), 'card mark is green');
 });

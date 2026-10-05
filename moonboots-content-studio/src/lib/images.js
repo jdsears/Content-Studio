@@ -15,10 +15,27 @@ export const templateThemes = {
   charcoal: { name: 'Charcoal', gradient: ['#171717', '#262626'], accent: '#737373' },
 };
 
-// Touchline image themes: white or green on navy
+// Touchline image themes. The mark is always white; the themes differ in the navy ground.
+// "Navy glow" is the app icon's ground: lighter in the middle, darker at the edges.
+const TOUCHLINE_GLOW = ['#16213A', '#080E1C'];
+
 export const touchlineThemes = {
-  'tl-green': { name: 'Navy & green', gradient: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], accent: TOUCHLINE_COLOURS.green },
-  'tl-white': { name: 'Navy & white', gradient: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], accent: TOUCHLINE_COLOURS.white },
+  'tl-navy': { name: 'Navy', gradient: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], accent: TOUCHLINE_COLOURS.white },
+  'tl-glow': { name: 'Navy glow', gradient: TOUCHLINE_GLOW, accent: TOUCHLINE_COLOURS.white, radial: true },
+};
+
+// Fill a Touchline image's ground: flat navy, or the app icon's glow
+const paintTouchlineGround = (ctx, width, height, colours, radial) => {
+  if (!radial) {
+    ctx.fillStyle = colours[0];
+    ctx.fillRect(0, 0, width, height);
+    return;
+  }
+  const grd = ctx.createRadialGradient(width * 0.5, height * 0.46, 0, width * 0.5, height * 0.46, Math.max(width, height) * 0.7);
+  grd.addColorStop(0, colours[0]);
+  grd.addColorStop(1, colours[1]);
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, width, height);
 };
 
 // Draw the Touchline mark (viewBox 64 x 40) at x, y, `width` wide
@@ -61,7 +78,7 @@ const generateTouchlineTemplateImage = async (content, platform, theme) => {
     x: { width: 1200, height: 675 },
   };
   const { width, height } = sizes[platform] || sizes.linkedin;
-  const t = touchlineThemes[theme] || touchlineThemes['tl-green'];
+  const t = touchlineThemes[theme] || touchlineThemes['tl-navy'];
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -69,12 +86,11 @@ const generateTouchlineTemplateImage = async (content, platform, theme) => {
   const unit = Math.min(width, height) / 1080;
   const pad = Math.round(Math.min(width, height) * 0.08);
 
-  ctx.fillStyle = TOUCHLINE_COLOURS.navy;
-  ctx.fillRect(0, 0, width, height);
+  paintTouchlineGround(ctx, width, height, t.gradient, t.radial);
 
-  // Mark and wordmark
+  // Mark (always white) and wordmark
   const markWidth = 104 * unit;
-  drawTouchlineMark(ctx, pad, pad, markWidth, t.accent);
+  drawTouchlineMark(ctx, pad, pad, markWidth, TOUCHLINE_COLOURS.white);
   ctx.font = `400 ${Math.round(46 * unit)}px Inter, sans-serif`;
   ctx.fillStyle = TOUCHLINE_COLOURS.white;
   ctx.fillText('Touchline', pad + markWidth + 20 * unit, pad + 32 * (markWidth / 64));
@@ -269,8 +285,8 @@ export const QUOTE_SIZES = {
 
 export const quoteStylesFor = (slug) => (slug === 'touchline'
   ? {
-    green: { name: 'Navy & green', bg: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], text: '#FFFFFF', footer: TOUCHLINE_COLOURS.green, mark: TOUCHLINE_COLOURS.green },
-    white: { name: 'Navy & white', bg: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], text: '#FFFFFF', footer: TOUCHLINE_COLOURS.green, mark: TOUCHLINE_COLOURS.white },
+    navy: { name: 'Navy', bg: [TOUCHLINE_COLOURS.navy, TOUCHLINE_COLOURS.navy], text: '#FFFFFF', footer: TOUCHLINE_COLOURS.green, mark: TOUCHLINE_COLOURS.white },
+    glow: { name: 'Navy glow', bg: TOUCHLINE_GLOW, radial: true, text: '#FFFFFF', footer: TOUCHLINE_COLOURS.green, mark: TOUCHLINE_COLOURS.white },
   }
   : {
     dark: { name: 'Dark', bg: ['#0f172a', '#0f172a'], text: '#FFFFFF', footer: '#94a3b8', mark: '#FFFFFF' },
@@ -298,11 +314,15 @@ export const renderQuoteCard = async ({ quote, brand, style, size = 'square' }) 
   const unit = Math.min(width, height) / 1080;
   const pad = Math.round(Math.min(width, height) * 0.08);
 
-  const grd = ctx.createLinearGradient(0, 0, width, height);
-  grd.addColorStop(0, s.bg[0]);
-  grd.addColorStop(1, s.bg[1]);
-  ctx.fillStyle = grd;
-  ctx.fillRect(0, 0, width, height);
+  if (s.radial) {
+    paintTouchlineGround(ctx, width, height, s.bg, true);
+  } else {
+    const grd = ctx.createLinearGradient(0, 0, width, height);
+    grd.addColorStop(0, s.bg[0]);
+    grd.addColorStop(1, s.bg[1]);
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, width, height);
+  }
 
   // Brand row
   if (touchline) {

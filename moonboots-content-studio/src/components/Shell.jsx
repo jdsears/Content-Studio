@@ -5,8 +5,8 @@ import { cx } from './ui.jsx';
 
 // ============ LOGOS ============
 
-// The Touchline mark (green or white on navy)
-export const TouchlineMark = ({ className = 'h-5 w-8', colour = TOUCHLINE_COLOURS.green }) => (
+// The Touchline mark, in one colour: white on navy
+export const TouchlineMark = ({ className = 'h-5 w-8', colour = TOUCHLINE_COLOURS.white }) => (
   <svg viewBox="0 0 64 40" className={className} style={{ color: colour }} aria-hidden="true">
     <g fill="none" stroke="currentColor" strokeLinecap="round">
       <path d="M16 32 A16 16 0 0 1 48 32" strokeWidth="3.6" />
