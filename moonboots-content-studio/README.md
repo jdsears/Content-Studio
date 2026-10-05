@@ -11,7 +11,11 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 
 | Part | What it does |
 | --- | --- |
-| `src/App.jsx` | The React app: Generate, Queue, Calendar, Graphics, Insights, Settings |
+| `src/App.jsx` | The React app shell: login, navigation (sidebar on desktop, bottom bar on phones) and page routing |
+| `src/pages/` | Home, Create, Schedule (list and calendar), Graphics, Insights, Settings |
+| `src/studio.jsx` | What the pages share: workspaces, posts, preferences and the actions on them |
+| `src/components/` | Shared pieces: buttons, cards, post cards, platform previews, toasts |
+| `src/index.css` | Each workspace's colours and font (MoonBoots by default, Touchline navy, green and Inter) |
 | `server.js` | Express server: serves the app, the API, and talks to Claude and Publer |
 | `server/auth.js` | Admin login (one password) and workspace API keys |
 | `server/store.js` | Saves settings and posts to a Railway Volume, or Supabase if configured |
@@ -34,7 +38,7 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 
 Storage: attach a Railway Volume (mount path `/data`). Railway tells the app where it is. Without a Volume or Supabase, saved keys and posts are lost on every deploy; `/api/health` shows `"persistent": false` when that is the case.
 
-Publer keys are not Railway variables. Paste each workspace's key in **Settings, Publer for <workspace>**. It is checked with Publer before it is saved, and only its last 4 characters are ever shown.
+Publer keys are not Railway variables. Paste each workspace's key in **Settings, Publer** (with that workspace selected). It is checked with Publer before it is saved, and only its last 4 characters are ever shown.
 
 ## Claude models
 
@@ -71,18 +75,18 @@ Returns `posts[]` with `id`, `platform`, `content`, `pillar`, `status`, `source`
 | `scheduled` | Publer accepted it for its posting time. |
 | `published` | Publer reports it live. Only these come back for `status=published`. |
 | `failed` | Publer refused it, or never confirmed it live within 24 hours. |
-| `cancelled` | Cancelled in the Queue (and deleted from Publer). |
-| `pending` | Sent through `/api/v1` and waiting for approval in the Queue. |
+| `cancelled` | Cancelled in Schedule (and deleted from Publer). |
+| `pending` | Sent through `/api/v1` and waiting for approval in Schedule. |
 
 Fields are only ever added to these replies, never renamed or removed.
 
-The older `/api/v1/content/*` routes (generate, submit, queue, analytics, delete) still work with the same key. Their posts wait for approval in the Queue.
+The older `/api/v1/content/*` routes (generate, submit, queue, analytics, delete) still work with the same key. Their posts wait for approval in Schedule.
 
 `GET /api/health` is public and reports whether storage is working and permanent.
 
 ## Touchline content rules
 
-Built into the Touchline prompt, and checked on every Touchline post in the Queue (warnings only; the text is never changed):
+Built into the Touchline prompt, and checked on every Touchline post in Create and Schedule (warnings only; the text is never changed):
 
 - No em dashes, en dashes or spaced hyphens used as dashes.
 - Never "the only" or "the first", FA Charter Standard or England Football Accredited endorsement, Atlas player tracking, a native app, or time savings we can't prove.
