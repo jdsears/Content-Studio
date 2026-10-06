@@ -238,3 +238,12 @@ test('repeated wrong passwords are rate limited', async () => {
   }
   assert.equal(last.status, 429);
 });
+
+test('Touchline treats Wicklewood Wanderers as a labelled example, never a real club', async () => {
+  const res = await api('/api/workspaces', { auth: 'admin' });
+  const touchline = res.json.find(w => w.slug === 'touchline');
+  const rules = touchline.brand_config.example_rules.join(' ');
+  assert.match(rules, /Wicklewood Wanderers is an invented club/);
+  assert.match(rules, /only when the post makes clear it is an example/);
+  assert.match(rules, /Never present it, its players or its quotes as real/);
+});
