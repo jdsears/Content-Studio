@@ -22,6 +22,7 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 | `server/claude.js` | The Claude models and how replies are read |
 | `server/publer.js` | Every Publer call, with plain-English errors |
 | `server/posts.js` | Every post (drafts written here, Touchline HQ, the API): approval, scheduling, retries, confirming they went live |
+| `server/engagement.js` | Likes, comments, shares and reach from Publer's analytics, every few hours |
 | `server/images.js` | Post images, kept as files in the Volume (or their own Supabase rows), not inside the store |
 | `server/schedule.js` | Posting slots in UK time |
 | `server/cards.js` | Branded Touchline image cards made on the server |
@@ -38,6 +39,8 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | No | Use Supabase for storage instead of a Volume. Run `supabase/content_studio_store.sql` first. |
 
 Storage: attach a Railway Volume (mount path `/data`). Railway tells the app where it is. Settings, keys, posts (drafts included) and images all live there. Without a Volume or Supabase, they are lost on every deploy; `/api/health` shows `"persistent": false` when that is the case. Drafts used to be kept in the browser; any still there are moved to the server the next time the app opens.
+
+Engagement numbers in Insights come from Publer's analytics. They need a Publer Business plan and an API key made with the **Analytics** permission ticked (a key's permissions can't be changed later, so make a new one if needed). Facebook Pages, Instagram business accounts and LinkedIn pages have numbers; LinkedIn profiles and X give little or none.
 
 Publer keys are not Railway variables. Paste each workspace's key in **Settings, Publer** (with that workspace selected). It is checked with Publer before it is saved, and only its last 4 characters are ever shown.
 
@@ -66,7 +69,7 @@ Reply: `id`, `status`, `platform`, `publishedAt`, `scheduledFor`, `platformPostI
 
 ### `GET /api/posts?status=published&limit=50`
 
-Returns every post for the key's workspace, including drafts written in Content Studio (`source: "studio"`). `posts[]` has `id`, `platform`, `content`, `pillar`, `status`, `source`, `publishedAt`, `scheduledFor`, `platformPostId` (Publer's post id), `postUrl` (the live post, when Publer gives it), `image`, `metrics`, `error`, `createdAt`.
+Returns every post for the key's workspace, including drafts written in Content Studio (`source: "studio"`). `posts[]` has `id`, `platform`, `content`, `pillar`, `status`, `source`, `publishedAt`, `scheduledFor`, `platformPostId` (Publer's post id), `postUrl` (the live post, when Publer gives it), `image`, `metrics` (`likes`, `comments`, `shares`, plus `reach`, `engagement` and more once Publer has them), `engagement` (the same numbers, or null), `error`, `createdAt`.
 
 ### Statuses
 
