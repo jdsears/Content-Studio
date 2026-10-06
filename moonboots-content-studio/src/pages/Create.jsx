@@ -402,7 +402,7 @@ export default function Create() {
                       title={t.name}
                       className={cx('flex items-center gap-2 h-8 pl-1 pr-3 rounded-full border text-xs transition', theme === key ? 'border-accent/60 text-ink' : 'border-line/60 text-muted hover:text-ink')}
                     >
-                      <span className="w-6 h-6 rounded-full border border-white/10 flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${t.gradient[0]}, ${t.gradient[1]})` }}>
+                      <span className="w-6 h-6 rounded-full border border-white/10 flex items-center justify-center" style={{ background: t.radial ? `radial-gradient(circle at 50% 46%, ${t.gradient[0]}, ${t.gradient[1]})` : `linear-gradient(135deg, ${t.gradient[0]}, ${t.gradient[1]})` }}>
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.accent }} />
                       </span>
                       {t.name}

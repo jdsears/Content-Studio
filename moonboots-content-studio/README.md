@@ -15,7 +15,7 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 | `src/pages/` | Home, Create, Schedule (list and calendar), Graphics, Insights, Settings |
 | `src/studio.jsx` | What the pages share: workspaces, posts, preferences and the actions on them |
 | `src/components/` | Shared pieces: buttons, cards, post cards, platform previews, toasts |
-| `src/index.css` | Each workspace's colours and font (MoonBoots by default, Touchline navy, green and Inter) |
+| `src/index.css` | Each workspace's colours and font (MoonBoots by default; Touchline navy and Inter, with green as the accent) |
 | `server.js` | Express server: serves the app, the API, and talks to Claude and Publer |
 | `server/auth.js` | Admin login (one password) and workspace API keys |
 | `server/store.js` | Saves settings and posts to a Railway Volume, or Supabase if configured |
@@ -59,7 +59,7 @@ All calls need `Authorization: Bearer <TOUCHLINE_API_KEY>`. The workspace comes 
   "source": "marcus-cmo" }
 ```
 
-Posts are already approved in Touchline HQ, so they schedule themselves: at `scheduleFor` if given, otherwise the next free Touchline posting slot (UK time). `platform` is `linkedin`, `facebook`, `instagram` or `x`. With `generateImage`, the server makes a branded Touchline card (white mark when `imageStyle` mentions white, otherwise green).
+Posts are already approved in Touchline HQ, so they schedule themselves: at `scheduleFor` if given, otherwise the next free Touchline posting slot (UK time). `platform` is `linkedin`, `facebook`, `instagram` or `x`. With `generateImage`, the server makes a branded Touchline card: the white Touchline mark on navy. `imageStyle` is accepted but no longer changes the card.
 
 Reply: `id`, `status`, `platform`, `publishedAt`, `scheduledFor`, `platformPostId`, `postUrl`, and `error` when something went wrong.
 
