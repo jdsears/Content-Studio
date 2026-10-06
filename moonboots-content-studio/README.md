@@ -21,7 +21,8 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 | `server/store.js` | Saves settings and posts to a Railway Volume, or Supabase if configured |
 | `server/claude.js` | The Claude models and how replies are read |
 | `server/publer.js` | Every Publer call, with plain-English errors |
-| `server/posts.js` | Posts from Touchline HQ: scheduling, retries, confirming they went live |
+| `server/posts.js` | Every post (drafts written here, Touchline HQ, the API): approval, scheduling, retries, confirming they went live |
+| `server/images.js` | Post images, kept as files in the Volume (or their own Supabase rows), not inside the store |
 | `server/schedule.js` | Posting slots in UK time |
 | `server/cards.js` | Branded Touchline image cards made on the server |
 | `shared/brand.js` | Touchline content checks and UTM tags (used by server and app) |
@@ -36,7 +37,7 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 | `MOONBOOTS_API_KEY` | No | Only if something outside the app posts to MoonBoots. |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | No | Use Supabase for storage instead of a Volume. Run `supabase/content_studio_store.sql` first. |
 
-Storage: attach a Railway Volume (mount path `/data`). Railway tells the app where it is. Without a Volume or Supabase, saved keys and posts are lost on every deploy; `/api/health` shows `"persistent": false` when that is the case.
+Storage: attach a Railway Volume (mount path `/data`). Railway tells the app where it is. Settings, keys, posts (drafts included) and images all live there. Without a Volume or Supabase, they are lost on every deploy; `/api/health` shows `"persistent": false` when that is the case. Drafts used to be kept in the browser; any still there are moved to the server the next time the app opens.
 
 Publer keys are not Railway variables. Paste each workspace's key in **Settings, Publer** (with that workspace selected). It is checked with Publer before it is saved, and only its last 4 characters are ever shown.
 
@@ -65,7 +66,7 @@ Reply: `id`, `status`, `platform`, `publishedAt`, `scheduledFor`, `platformPostI
 
 ### `GET /api/posts?status=published&limit=50`
 
-Returns `posts[]` with `id`, `platform`, `content`, `pillar`, `status`, `source`, `publishedAt`, `scheduledFor`, `platformPostId` (Publer's post id), `postUrl` (the live post, when Publer gives it), `image`, `metrics`, `error`, `createdAt`.
+Returns every post for the key's workspace, including drafts written in Content Studio (`source: "studio"`). `posts[]` has `id`, `platform`, `content`, `pillar`, `status`, `source`, `publishedAt`, `scheduledFor`, `platformPostId` (Publer's post id), `postUrl` (the live post, when Publer gives it), `image`, `metrics`, `error`, `createdAt`.
 
 ### Statuses
 
@@ -76,7 +77,9 @@ Returns `posts[]` with `id`, `platform`, `content`, `pillar`, `status`, `source`
 | `published` | Publer reports it live. Only these come back for `status=published`. |
 | `failed` | Publer refused it, or never confirmed it live within 24 hours. |
 | `cancelled` | Cancelled in Schedule (and deleted from Publer). |
-| `pending` | Sent through `/api/v1` and waiting for approval in Schedule. |
+| `pending` | A draft written in Content Studio, or a post sent through `/api/v1`, waiting for approval in Schedule. |
+| `approved` | Approved to post by hand (X, or a workspace without a Publer key). Marked `published` once posted. |
+| `rejected` | A draft turned down in Schedule. It can go back to approvals. |
 
 Fields are only ever added to these replies, never renamed or removed.
 
