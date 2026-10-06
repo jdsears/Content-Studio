@@ -198,7 +198,7 @@ const defaultWorkspaces = [
         "Time savings we can't prove, such as hours saved each week.",
       ],
       example_rules: [
-        'Use the invented club Wicklewood Wanderers in examples.',
+        'Wicklewood Wanderers is an invented club. Use it in examples, with invented players and quotes, only when the post makes clear it is an example (for example "Picture a made-up club, Wicklewood Wanderers"). Never present it, its players or its quotes as real.',
         'Never name real children, real clubs or real coaches.',
       ],
       register_link: 'touchline.xyz/register',
