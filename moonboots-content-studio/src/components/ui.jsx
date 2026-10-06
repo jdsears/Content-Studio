@@ -25,7 +25,7 @@ export const Button = ({ variant = 'secondary', size = 'md', icon, loading = fal
     {...props}
     disabled={disabled || loading}
     className={cx(
-      'inline-flex items-center justify-center whitespace-nowrap transition disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+      'inline-flex items-center justify-center whitespace-nowrap transition disabled:opacity-50 disabled:cursor-not-allowed focus:outline-hidden focus-visible:ring-2 focus-visible:ring-accent/60',
       BUTTON_VARIANTS[variant], BUTTON_SIZES[size], className,
     )}
   >
@@ -114,7 +114,7 @@ export const Toggle = ({ checked, onChange, label, description }) => (
       <span className="block text-sm text-ink">{label}</span>
       {description && <span className="block text-xs text-muted mt-0.5">{description}</span>}
     </span>
-    <span className="relative inline-flex flex-shrink-0 mt-0.5">
+    <span className="relative inline-flex shrink-0 mt-0.5">
       <input type="checkbox" className="sr-only peer" checked={checked} onChange={e => onChange(e.target.checked)} />
       <span className="w-10 h-6 rounded-full bg-raised border border-line peer-checked:bg-primary peer-checked:border-primary transition" />
       <span className="absolute left-1 top-1 w-4 h-4 rounded-full bg-ink peer-checked:bg-primary-ink peer-checked:translate-x-4 transition" />
@@ -131,7 +131,7 @@ export const Segmented = ({ options, value, onChange, size = 'md' }) => (
         className={cx(
           'inline-flex items-center gap-1.5 rounded-lg transition font-medium',
           size === 'sm' ? 'px-2.5 h-7 text-xs' : 'px-3 h-8 text-sm',
-          value === option.value ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink',
+          value === option.value ? 'bg-surface text-ink shadow-xs' : 'text-muted hover:text-ink',
         )}
       >
         {option.icon && <Icon name={option.icon} className="w-4 h-4" />}
@@ -142,7 +142,7 @@ export const Segmented = ({ options, value, onChange, size = 'md' }) => (
   </div>
 );
 
-export const inputClass = 'w-full px-3.5 py-2.5 bg-bg/60 border border-line/70 rounded-xl text-sm text-ink placeholder-faint focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20';
+export const inputClass = 'w-full px-3.5 py-2.5 bg-bg/60 border border-line/70 rounded-xl text-sm text-ink placeholder-faint focus:outline-hidden focus:border-accent/60 focus:ring-2 focus:ring-accent/20';
 
 export const Field = ({ label, hint, children }) => (
   <label className="block">
@@ -159,7 +159,7 @@ export const BrandWarnings = ({ warnings, className }) => {
     <div className={cx('p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-1', className)}>
       {warnings.map(w => (
         <p key={w.id} className="flex gap-2 text-xs text-amber-200">
-          <Icon name="alert" className="w-3.5 h-3.5 flex-shrink-0 mt-px" />
+          <Icon name="alert" className="w-3.5 h-3.5 shrink-0 mt-px" />
           {w.message}
         </p>
       ))}
@@ -255,13 +255,13 @@ export const FeedbackProvider = ({ children }) => {
     <FeedbackContext.Provider value={{ toast, confirm }}>
       {children}
 
-      <div className="fixed z-[60] bottom-24 lg:bottom-6 right-4 left-4 sm:left-auto sm:w-96 flex flex-col gap-2 pointer-events-none">
+      <div className="fixed z-60 bottom-24 lg:bottom-6 right-4 left-4 sm:left-auto sm:w-96 flex flex-col gap-2 pointer-events-none">
         {toasts.map(t => (
           <div key={t.id} className={cx('pointer-events-auto animate-toast-in flex gap-3 p-4 rounded-2xl bg-surface border shadow-2xl', toneStyles[t.tone])}>
-            <Icon name={toneIcons[t.tone][0]} className={cx('w-5 h-5 flex-shrink-0', toneIcons[t.tone][1])} />
+            <Icon name={toneIcons[t.tone][0]} className={cx('w-5 h-5 shrink-0', toneIcons[t.tone][1])} />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-ink">{t.title}</p>
-              {t.body && <p className="text-xs text-muted mt-0.5 break-words">{t.body}</p>}
+              {t.body && <p className="text-xs text-muted mt-0.5 wrap-break-word">{t.body}</p>}
               {t.action && (
                 <button onClick={() => { t.action.onClick(); dismiss(t.id); }} className="mt-2 text-xs font-semibold text-accent hover:underline">
                   {t.action.label}

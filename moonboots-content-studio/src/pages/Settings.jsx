@@ -31,7 +31,7 @@ const Notice = ({ tone = 'info', children }) => (
         : tone === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
           : 'bg-raised/40 border-line/60 text-muted',
   )}>
-    <Icon name={tone === 'success' ? 'check' : tone === 'info' ? 'sparkles' : 'alert'} className="w-4 h-4 flex-shrink-0" />
+    <Icon name={tone === 'success' ? 'check' : tone === 'info' ? 'sparkles' : 'alert'} className="w-4 h-4 shrink-0" />
     <div className="min-w-0">{children}</div>
   </div>
 );

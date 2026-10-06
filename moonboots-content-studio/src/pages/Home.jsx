@@ -16,7 +16,7 @@ const Stat = ({ label, value, tone, onClick }) => (
 
 const Attention = ({ icon, tone, title, body, action }) => (
   <div className={cx('flex items-start gap-3 p-4 rounded-2xl border', tone === 'red' ? 'bg-red-500/10 border-red-500/30' : tone === 'yellow' ? 'bg-amber-500/10 border-amber-500/30' : 'bg-accent/10 border-accent/30')}>
-    <Icon name={icon} className={cx('w-5 h-5 flex-shrink-0 mt-0.5', tone === 'red' ? 'text-red-300' : tone === 'yellow' ? 'text-amber-300' : 'text-accent')} />
+    <Icon name={icon} className={cx('w-5 h-5 shrink-0 mt-0.5', tone === 'red' ? 'text-red-300' : tone === 'yellow' ? 'text-amber-300' : 'text-accent')} />
     <div className="flex-1 min-w-0">
       <p className="text-sm font-medium text-ink">{title}</p>
       {body && <p className="text-xs text-muted mt-0.5">{body}</p>}
@@ -28,7 +28,7 @@ const Attention = ({ icon, tone, title, body, action }) => (
 const MiniRow = ({ item, onClick }) => (
   <button onClick={onClick} className="w-full flex items-center gap-3 py-2.5 text-left group">
     <span className="w-14 text-xs text-muted tabular-nums">{formatTime(item.when)}</span>
-    <span className="w-8 h-8 rounded-lg bg-raised flex items-center justify-center text-ink flex-shrink-0">
+    <span className="w-8 h-8 rounded-lg bg-raised flex items-center justify-center text-ink shrink-0">
       <PlatformIcon platform={item.platform} className="w-3.5 h-3.5" />
     </span>
     <span className="flex-1 min-w-0">
@@ -143,7 +143,7 @@ export default function Home() {
             <div className="divide-y divide-line/40">
               {recent.slice(0, 6).map(item => (
                 <div key={item.key} className="flex items-center gap-3 py-2.5">
-                  <span className="w-8 h-8 rounded-lg bg-raised flex items-center justify-center text-ink flex-shrink-0">
+                  <span className="w-8 h-8 rounded-lg bg-raised flex items-center justify-center text-ink shrink-0">
                     <PlatformIcon platform={item.platform} className="w-3.5 h-3.5" />
                   </span>
                   <span className="flex-1 min-w-0">

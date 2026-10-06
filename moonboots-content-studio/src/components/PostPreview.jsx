@@ -23,7 +23,7 @@ const ImageSlot = ({ image, loading, onOpen, aspect }) => {
 };
 
 const Text = ({ children, className }) => (
-  <p className={cx('whitespace-pre-wrap break-words leading-relaxed', className)}>{children}</p>
+  <p className={cx('whitespace-pre-wrap wrap-break-word leading-relaxed', className)}>{children}</p>
 );
 
 export const PostPreview = ({ platform, content, image, imageLoading, workspace, onOpenImage }) => {
@@ -57,8 +57,8 @@ export const PostPreview = ({ platform, content, image, imageLoading, workspace,
           <span className="text-sm font-semibold">{handle}</span>
         </div>
         {(image || imageLoading)
-          ? <ImageSlot image={image} loading={imageLoading} onOpen={onOpenImage} aspect="aspect-[4/5]" />
-          : <div className="aspect-[4/5] bg-slate-100 flex items-center justify-center text-xs text-slate-400">Instagram posts need an image</div>}
+          ? <ImageSlot image={image} loading={imageLoading} onOpen={onOpenImage} aspect="aspect-4/5" />
+          : <div className="aspect-4/5 bg-slate-100 flex items-center justify-center text-xs text-slate-400">Instagram posts need an image</div>}
         <div className="px-3 py-3">
           <Text className="text-sm"><span className="font-semibold mr-1.5">{handle}</span>{content}</Text>
         </div>

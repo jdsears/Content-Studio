@@ -37,13 +37,13 @@ export const WorkspaceAvatar = ({ workspace, size = 'md' }) => {
   const box = size === 'sm' ? 'w-7 h-7 rounded-lg' : 'w-10 h-10 rounded-xl';
   if (workspace?.slug === 'touchline') {
     return (
-      <span className={cx(box, 'flex items-center justify-center flex-shrink-0')} style={{ backgroundColor: TOUCHLINE_COLOURS.navy }}>
+      <span className={cx(box, 'flex items-center justify-center shrink-0')} style={{ backgroundColor: TOUCHLINE_COLOURS.navy }}>
         <TouchlineMark className={size === 'sm' ? 'w-5 h-3' : 'w-7 h-5'} />
       </span>
     );
   }
   return (
-    <span className={cx(box, 'flex items-center justify-center flex-shrink-0 bg-slate-900 border border-slate-700')}>
+    <span className={cx(box, 'flex items-center justify-center shrink-0 bg-slate-900 border border-slate-700')}>
       <span className={cx('relative', size === 'sm' ? 'w-3.5 h-3.5' : 'w-5 h-5')}>
         <span className="absolute inset-0 rounded-full bg-white" />
         <span className="absolute rounded-full bg-slate-900" style={{ width: '70%', height: '70%', top: '15%', left: '35%' }} />
@@ -121,7 +121,7 @@ export const NAV_ITEMS = [
 ];
 
 export const Sidebar = ({ page, navigate, badges, workspaces, current, onSwitch, onLogout }) => (
-  <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 flex-col bg-surface/80 border-r border-line/60 backdrop-blur">
+  <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 flex-col bg-surface/80 border-r border-line/60 backdrop-blur-sm">
     <div className="px-5 pt-6 pb-5">
       <Logo workspace={current} />
     </div>
@@ -158,7 +158,7 @@ export const Sidebar = ({ page, navigate, badges, workspaces, current, onSwitch,
 );
 
 export const MobileTopBar = ({ workspaces, current, onSwitch, onLogout }) => (
-  <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between gap-3 px-4 h-14 bg-bg/90 backdrop-blur border-b border-line/50">
+  <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between gap-3 px-4 h-14 bg-bg/90 backdrop-blur-sm border-b border-line/50">
     <Logo workspace={current} />
     <div className="flex items-center gap-1">
       <WorkspaceSwitcher workspaces={workspaces} current={current} onSwitch={onSwitch} compact />
@@ -170,7 +170,7 @@ export const MobileTopBar = ({ workspaces, current, onSwitch, onLogout }) => (
 );
 
 export const BottomNav = ({ page, navigate, badges }) => (
-  <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-surface/95 backdrop-blur border-t border-line/60 pb-safe">
+  <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-surface/95 backdrop-blur-sm border-t border-line/60 pb-safe">
     <div className="grid grid-cols-6">
       {NAV_ITEMS.map(item => (
         <button

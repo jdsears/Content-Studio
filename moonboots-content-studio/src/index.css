@@ -1,6 +1,36 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: rgb(var(--bg));
+  --color-surface: rgb(var(--surface));
+  --color-raised: rgb(var(--raised));
+  --color-line: rgb(var(--line));
+  --color-ink: rgb(var(--ink));
+  --color-muted: rgb(var(--muted));
+  --color-faint: rgb(var(--faint));
+  --color-accent: rgb(var(--accent));
+  --color-primary: rgb(var(--primary));
+  --color-primary-ink: rgb(var(--primary-ink));
+
+  --font-brand: var(--font);
+}
+
+/* Tailwind 3 defaults kept after the move to Tailwind 4: grey borders, and a
+   pointing hand on buttons. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 /* MoonBoots look (the default) */
 :root {

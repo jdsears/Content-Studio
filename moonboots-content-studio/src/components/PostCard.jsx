@@ -140,7 +140,7 @@ export const PostCard = ({ item, compact = false }) => {
   return (
     <Card className={cx('p-4 sm:p-5', item.group === 'problems' && 'border-red-500/40')}>
       <div className="flex items-start gap-3">
-        <span className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center text-ink flex-shrink-0">
+        <span className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center text-ink shrink-0">
           <PlatformIcon platform={item.platform} className="w-4 h-4" />
         </span>
         <div className="flex-1 min-w-0">
@@ -156,7 +156,7 @@ export const PostCard = ({ item, compact = false }) => {
           </p>
         </div>
         {item.image && (
-          <button onClick={() => setViewImage(item.image)} className="flex-shrink-0">
+          <button onClick={() => setViewImage(item.image)} className="shrink-0">
             <img src={item.image} alt="Post image" className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl object-cover border border-line/60" />
           </button>
         )}
@@ -165,7 +165,7 @@ export const PostCard = ({ item, compact = false }) => {
       {!compact && (
         <>
           <BrandWarnings warnings={item.warnings} className="mt-3" />
-          <p className="mt-3 text-sm text-ink/90 whitespace-pre-wrap leading-relaxed break-words">{text}</p>
+          <p className="mt-3 text-sm text-ink/90 whitespace-pre-wrap leading-relaxed wrap-break-word">{text}</p>
           {long && (
             <button onClick={() => setExpanded(!expanded)} className="mt-1 text-xs font-medium text-accent">
               {expanded ? 'Show less' : 'Show more'}
@@ -173,11 +173,11 @@ export const PostCard = ({ item, compact = false }) => {
           )}
         </>
       )}
-      {compact && <p className="mt-2 text-sm text-ink/90 line-clamp-2 break-words">{item.content}</p>}
+      {compact && <p className="mt-2 text-sm text-ink/90 line-clamp-2 wrap-break-word">{item.content}</p>}
 
       {item.error && (
         <p className="mt-3 flex gap-2 text-xs text-red-300">
-          <Icon name="alert" className="w-3.5 h-3.5 flex-shrink-0 mt-px" />
+          <Icon name="alert" className="w-3.5 h-3.5 shrink-0 mt-px" />
           {item.error}
         </p>
       )}

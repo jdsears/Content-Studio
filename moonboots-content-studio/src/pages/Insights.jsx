@@ -179,7 +179,7 @@ export default function Insights() {
       </Card>
 
       <div className="flex gap-3 p-4 rounded-2xl border border-line/60 bg-raised/30 text-sm text-muted">
-        <Icon name="insights" className="w-5 h-5 text-faint flex-shrink-0" />
+        <Icon name="insights" className="w-5 h-5 text-faint shrink-0" />
         <p>
           These numbers come from posts sent through Content Studio. Likes, comments and reach live in Publer's analytics,
           which this app does not read yet.

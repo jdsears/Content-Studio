@@ -156,10 +156,10 @@ const DraftSkeleton = ({ platform }) => (
       <p className="text-sm text-muted">Writing the {PLATFORM_NAMES[platform]} post</p>
     </div>
     <div className="space-y-2.5 animate-pulse">
-      <div className="h-3 rounded bg-raised w-11/12" />
-      <div className="h-3 rounded bg-raised w-10/12" />
-      <div className="h-3 rounded bg-raised w-8/12" />
-      <div className="h-3 rounded bg-raised w-9/12" />
+      <div className="h-3 rounded-sm bg-raised w-11/12" />
+      <div className="h-3 rounded-sm bg-raised w-10/12" />
+      <div className="h-3 rounded-sm bg-raised w-8/12" />
+      <div className="h-3 rounded-sm bg-raised w-9/12" />
     </div>
   </Card>
 );
