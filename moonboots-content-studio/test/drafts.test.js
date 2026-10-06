@@ -8,6 +8,9 @@ import { startFakePubler } from './helpers/fake-publer.js';
 
 let fake;
 let service;
+let store;
+let createPostService;
+let createImageStore;
 let secrets;
 let dataDir;
 
@@ -23,10 +26,12 @@ before(async () => {
   process.env.DATA_DIR = dataDir;
   delete process.env.RAILWAY_ENVIRONMENT;
   const { createStore } = await import('../server/store.js');
-  const { createPostService } = await import('../server/posts.js');
+  ({ createPostService } = await import('../server/posts.js'));
+  ({ createImageStore } = await import('../server/images.js'));
   secrets = { publer_api_key: 'good-key', platform_accounts: { linkedin: 'acc_li' } };
+  store = createStore(null);
   service = createPostService({
-    store: createStore(null),
+    store,
     getWorkspaceById: async id => (id === workspace.id ? workspace : null),
     getWorkspaceSecrets: async () => secrets,
   });
@@ -42,7 +47,7 @@ test('a draft is saved on the server with its image as a file, not inside the st
   assert.equal(draft.status, 'pending');
   assert.equal(draft.source, 'studio');
   assert.equal(draft.image, null);
-  assert.match(draft.image_ref, /^file:post_[a-z0-9]+\.png$/);
+  assert.match(draft.image_ref, /^file:post_[a-z0-9]+-[0-9a-f]{8}\.png$/);
   assert.equal(imageFiles().length, 1);
   assert.ok(!readFileSync(join(dataDir, 'content-studio-store.json'), 'utf8').includes('iVBORw0KGgo'), 'the store file holds no image data');
   const image = await service.readImage(draft);
@@ -132,6 +137,69 @@ test('images kept inside older posts are moved out to files', async () => {
   assert.ok(await service.moveInlineImages() >= 1);
   const moved = await service.get('post_oldinline');
   assert.equal(moved.image, null);
-  assert.match(moved.image_ref, /^file:post_oldinline\.png$/);
+  assert.match(moved.image_ref, /^file:post_oldinline-[0-9a-f]{8}\.png$/);
   assert.equal(await service.moveInlineImages(), 0, 'nothing left to move');
+});
+
+// ---------- Found in review: races and edge cases ----------
+
+// A post service whose image store runs `during` while an image is being saved
+function serviceWithSlowImages(during) {
+  const real = createImageStore(store);
+  const slow = { ...real, put: async (...args) => { const ref = await real.put(...args); await during(); return ref; } };
+  return createPostService({ store, getWorkspaceById: async () => workspace, getWorkspaceSecrets: async () => secrets, images: slow });
+}
+
+test('moving an old image never undoes a cancel made at the same moment', async () => {
+  await service.save({ id: 'post_racecancel', workspace_id: 'touchline', platform: 'linkedin', content: 'Racing', status: 'scheduled', auto_schedule: true, image: PNG, scheduled_for: '2030-01-01T08:00:00.000Z', created_at: new Date().toISOString() });
+  const racing = serviceWithSlowImages(() => service.update('post_racecancel', null, { status: 'cancelled' }));
+  await racing.moveInlineImages();
+  const after = await service.get('post_racecancel');
+  assert.equal(after.status, 'cancelled', 'the cancel stands');
+  assert.equal(after.image, null);
+  assert.ok(after.image_ref);
+});
+
+test('an edit that loses a race with approve saves nothing and keeps the old image', async () => {
+  const draft = await service.createStudioDraft(workspace, { platform: 'facebook', content: 'Before the race', image: PNG });
+  const filesBefore = imageFiles().length;
+  const racing = serviceWithSlowImages(() => service.update(draft.id, null, { auto_schedule: true, status: 'queued' }));
+  await assert.rejects(racing.editDraft(workspace, draft.id, { content: 'After the race', image: PNG }), /approved or changed while you were editing/);
+  const after = await service.get(draft.id);
+  assert.equal(after.content, 'Before the race');
+  assert.equal(after.image_ref, draft.image_ref);
+  assert.ok(await service.readImage(after), 'the old image is still there');
+  assert.equal(imageFiles().length, filesBefore, 'the new image was cleaned up');
+  await service.update(draft.id, null, { status: 'cancelled', auto_schedule: false });
+});
+
+test('a post marked as posted by hand never gets a Publer error', async () => {
+  const saved = secrets;
+  secrets = {};
+  try {
+    const draft = await service.createStudioDraft(workspace, { platform: 'linkedin', content: 'Posted by hand' });
+    await service.approve(workspace, draft.id);
+    await service.markPosted(workspace, draft.id);
+    await service.runChecks();
+    const after = await service.get(draft.id);
+    assert.equal(after.status, 'published');
+    assert.equal(after.error ?? null, null);
+  } finally {
+    secrets = saved;
+  }
+});
+
+test('SVG and other non-photo images are refused', async () => {
+  const svg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIG9ubG9hZD0iYWxlcnQoMSkiLz4=';
+  await assert.rejects(service.createStudioDraft(workspace, { platform: 'linkedin', content: 'x', image: svg }), /PNG, JPEG, WebP or GIF/);
+  await assert.rejects(service.createDraft(workspace, { platform: 'linkedin', content: 'x', status: 'pending', image: svg }), /PNG, JPEG, WebP or GIF/);
+});
+
+test('two tabs moving the same browser draft at once save it once', async () => {
+  const filesBefore = imageFiles().length;
+  const sent = { platform: 'linkedin', content: 'Moved from two tabs', localId: 999001, status: 'pending', image: PNG };
+  const [a, b] = await Promise.all([service.createStudioDraft(workspace, sent), service.createStudioDraft(workspace, sent)]);
+  assert.equal(a.id, b.id);
+  assert.equal((await service.list({ workspaceId: 'touchline' })).filter(p => p.local_id === '999001').length, 1);
+  assert.equal(imageFiles().length, filesBefore + 1);
 });

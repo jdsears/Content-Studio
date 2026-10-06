@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
@@ -8,7 +9,8 @@ import { join } from 'path';
 // A post keeps a small reference to its image in `image_ref`.
 
 const COLLECTION = 'post_images';
-const DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i;
+// Only raster images. SVG can carry script, so it is never stored or served.
+const DATA_URL = /^data:(image\/(?:png|jpe?g|webp|gif));base64,([\s\S]+)$/i;
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
 const MIME_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 
@@ -25,11 +27,12 @@ function fileOf(ref) {
 export function createImageStore(store) {
   const dir = store.dir ? join(store.dir, 'images') : null;
 
-  // Save a data URL and return its reference ("file:post_x.png" or "store:post_x")
+  // Save a data URL under a new name and return its reference ("file:post_x-ab12.png" or "store:post_x-ab12").
+  // A new name each time, so a replaced image is only deleted once the post points at the new one.
   async function put(postId, dataUrl) {
     const match = DATA_URL.exec(dataUrl || '');
-    if (!match) throw new Error('Not an image data URL');
-    const id = safeName(postId);
+    if (!match) throw new Error('Images must be PNG, JPEG, WebP or GIF.');
+    const id = `${safeName(postId)}-${crypto.randomBytes(4).toString('hex')}`;
     if (dir) {
       const ext = EXTENSIONS[match[1].toLowerCase()] || 'png';
       await fs.mkdir(dir, { recursive: true });

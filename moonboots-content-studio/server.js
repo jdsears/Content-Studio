@@ -1252,7 +1252,7 @@ app.post('/api/v1/content/submit', async (req, res) => {
       })),
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -1396,7 +1396,7 @@ async function sendPostImage(res, post) {
   if (post.image && !post.image_ref && !post.image.startsWith('data:')) return res.redirect(post.image);
   const image = await postService.readImage(post);
   if (!image) return res.status(404).json({ error: 'This post has no image' });
-  res.set('Cache-Control', 'private, max-age=3600');
+  res.set({ 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
   res.type(image.type).send(image.buffer);
 }
 
