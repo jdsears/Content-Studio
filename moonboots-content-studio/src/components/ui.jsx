@@ -63,20 +63,17 @@ export const Badge = ({ tone = 'neutral', wrap = false, className, children }) =
 
 const STATUS = {
   pending: ['yellow', 'Awaiting approval'],
-  approved: ['green', 'Approved'],
-  publishing: ['purple', 'Sending'],
-  published: ['blue', 'Published'],
-  rejected: ['neutral', 'Rejected'],
+  approved: ['green', 'Post by hand'],
   queued: ['yellow', 'Waiting for Publer'],
   scheduled: ['purple', 'Scheduled'],
+  published: ['blue', 'Published'],
   failed: ['red', 'Problem'],
+  rejected: ['neutral', 'Rejected'],
   cancelled: ['neutral', 'Cancelled'],
 };
 
-export const StatusBadge = ({ status, item }) => {
-  // A draft sent to Publer for a future time is scheduled, not yet published
-  const key = item?.origin === 'local' && status === 'published' && item.group === 'upcoming' ? 'scheduled' : status;
-  const [tone, label] = STATUS[key] || ['neutral', status];
+export const StatusBadge = ({ status }) => {
+  const [tone, label] = STATUS[status] || ['neutral', status];
   return <Badge tone={tone}>{label}</Badge>;
 };
 

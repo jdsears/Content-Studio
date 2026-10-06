@@ -78,7 +78,7 @@ const WhenPicker = ({ platform, when, workspace, onChange }) => {
 
 // ============ ONE DRAFT ============
 
-const DraftCard = ({ platform, draft, workspace, onChange, onImage, onRemoveImage, onAdd, onDiscard }) => {
+const DraftCard = ({ platform, draft, workspace, onChange, onImage, onRemoveImage, onAdd, onDiscard, adding }) => {
   const [mode, setMode] = useState('preview');
   const [viewImage, setViewImage] = useState(null);
   const limit = PLATFORM_LIMITS[platform];
@@ -139,7 +139,7 @@ const DraftCard = ({ platform, draft, workspace, onChange, onImage, onRemoveImag
         <WhenPicker platform={platform} when={draft.when} workspace={workspace} onChange={when => onChange({ when })} />
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button variant="ghost" icon="trash" onClick={onDiscard}>Discard</Button>
-          <Button variant="primary" icon="check" disabled={!draft.content.trim() || over} onClick={onAdd}>Add to approvals</Button>
+          <Button variant="primary" icon="check" loading={adding} disabled={!draft.content.trim() || over || draft.imageLoading} onClick={onAdd}>Add to approvals</Button>
         </div>
       </div>
       <ImageViewer src={viewImage} onClose={() => setViewImage(null)} />
@@ -275,40 +275,52 @@ export default function Create() {
     return { ...prev, drafts: Object.keys(rest).length ? rest : null };
   });
 
-  const addOne = (platform, { quiet = false } = {}) => {
+  const [adding, setAdding] = useState(null); // a platform, or 'all'
+
+  // Save one draft on the server. Returns true when it was saved.
+  const addOne = async (platform, { quiet = false } = {}) => {
     const draft = drafts[platform];
     if (!draft) return false;
     const at = draft.when?.mode !== 'none' && isValidDate(draft.when?.at) ? draft.when.at : null;
-    addDraft({
-      platform,
-      content: draft.content,
-      pillar: pillarName,
-      image: draft.image,
-      scheduledFor: at,
-      suggestedTime: at ? formatWhen(at) : null,
-    });
+    try {
+      await addDraft({ platform, content: draft.content, pillar: pillarName, image: draft.image, scheduledFor: at });
+    } catch (error) {
+      toast({ tone: 'error', title: `Could not save the ${PLATFORM_NAMES[platform]} post`, body: error.message });
+      return false;
+    }
     discard(platform);
     if (!quiet) {
       toast({
         tone: 'success',
         title: `${PLATFORM_NAMES[platform]} post added to approvals`,
-        body: at ? `Planned for ${formatWhen(at)}.` : 'No time set.',
+        body: at ? `Planned for ${formatWhen(at)}.` : 'No time set, so it goes out once approved.',
         action: { label: 'Review approvals', onClick: () => navigate('schedule', 'approval') },
       });
     }
     return true;
   };
 
-  const addAll = () => {
+  const addSingle = async platform => {
+    setAdding(platform);
+    await addOne(platform);
+    setAdding(null);
+  };
+
+  const addAll = async () => {
     const ready = draftPlatforms.filter(p => {
       const d = drafts[p];
-      return d.content.trim() && !(PLATFORM_LIMITS[p] && d.content.length > PLATFORM_LIMITS[p]);
+      return d.content.trim() && !d.imageLoading && !(PLATFORM_LIMITS[p] && d.content.length > PLATFORM_LIMITS[p]);
     });
-    ready.forEach(p => addOne(p, { quiet: true }));
-    if (ready.length) {
+    setAdding('all');
+    let saved = 0;
+    for (const p of ready) {
+      if (await addOne(p, { quiet: true })) saved += 1;
+    }
+    setAdding(null);
+    if (saved) {
       toast({
         tone: 'success',
-        title: `${ready.length} post${ready.length === 1 ? '' : 's'} added to approvals`,
+        title: `${saved} post${saved === 1 ? '' : 's'} added to approvals`,
         action: { label: 'Review approvals', onClick: () => navigate('schedule', 'approval') },
       });
     }
@@ -437,7 +449,7 @@ export default function Create() {
                 <p className="text-sm text-muted">
                   {draftPlatforms.length} draft{draftPlatforms.length === 1 ? '' : 's'}. Check each one, then add it to approvals.
                 </p>
-                {draftPlatforms.length > 1 && <Button size="sm" icon="check" onClick={addAll}>Add all</Button>}
+                {draftPlatforms.length > 1 && <Button size="sm" icon="check" loading={adding === 'all'} disabled={!!adding} onClick={addAll}>Add all</Button>}
               </div>
               {draftPlatforms.map(p => (
                 <DraftCard
@@ -448,7 +460,8 @@ export default function Create() {
                   onChange={changes => updateDraft(p, changes)}
                   onImage={() => makeImage(p, drafts[p].content)}
                   onRemoveImage={() => updateDraft(p, { image: null })}
-                  onAdd={() => addOne(p)}
+                  onAdd={() => addSingle(p)}
+                  adding={adding === p}
                   onDiscard={() => discard(p)}
                 />
               ))}

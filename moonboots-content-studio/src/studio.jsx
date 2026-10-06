@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, apiJson } from './lib/api.js';
-import { combinePosts, PLATFORM_NAMES } from './lib/posts.js';
-import { isValidDate } from './lib/schedule.js';
+import { browserDraftToServer, toItems, PLATFORM_NAMES } from './lib/posts.js';
+import { formatWhen } from './lib/schedule.js';
 import {
   loadPosts, savePosts, loadSettings, saveSettings,
   loadActiveWorkspace, saveActiveWorkspace, removeLegacySecretsFromBrowser,
@@ -9,6 +9,7 @@ import {
 import { useFeedback } from './components/ui.jsx';
 
 // Everything the pages share: workspaces, posts, settings and the actions on them.
+// Posts (drafts included) live on the server, so they are safe and the same on every device.
 
 const StudioContext = createContext(null);
 
@@ -37,6 +38,30 @@ export const freshGenerator = (workspace, settings) => {
     theme: settings?.defaultTheme || null,
     drafts: null, // { [platform]: { content, image, imageLoading, when: { mode, at } } }
   };
+};
+
+// What to tell the person after an action on a post (null means it went wrong)
+const doneMessages = (action, post) => {
+  if (action === 'approve') {
+    if (post.status === 'approved') {
+      return post.platform === 'x'
+        ? { title: 'Approved', body: 'Copy it and post it on X when it is time.' }
+        : { title: 'Approved', body: 'Connect Publer in Settings to post automatically. For now, copy it and post it by hand.' };
+    }
+    if (post.status === 'scheduled') return { title: 'Scheduled in Publer', body: `${PLATFORM_NAMES[post.platform]} post goes out ${formatWhen(post.scheduledFor)}.` };
+    if (post.status === 'failed') return null;
+    if (post.status === 'queued' && post.error) {
+      return { title: 'Waiting for Publer', body: `Publer didn't take it yet (${post.error}). Content Studio tries again every few minutes.` };
+    }
+    return { title: 'Sent to Publer', body: 'It is on its way.' };
+  }
+  return {
+    cancel: { title: 'Post cancelled' },
+    retry: { title: 'Sent to Publer again' },
+    reject: { title: 'Rejected', body: 'It is under Rejected & cancelled if you change your mind.' },
+    reopen: { title: 'Back in approvals' },
+    'mark-posted': { title: 'Marked as posted' },
+  }[action] || { title: 'Done' };
 };
 
 export const StudioProvider = ({ page, param, navigate, children }) => {
@@ -73,16 +98,6 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
     });
   }, [activeId]);
 
-  // ---------- Drafts and approvals (this browser) ----------
-  const [localPosts, setLocalPostsState] = useState(() => loadPosts(workspaceId));
-  const setLocalPosts = useCallback(update => {
-    setLocalPostsState(prev => {
-      const next = typeof update === 'function' ? update(prev) : update;
-      savePosts(activeId, next);
-      return next;
-    });
-  }, [activeId]);
-
   // ---------- Generator (kept while moving between pages) ----------
   const [generator, setGenerator] = useState(() => freshGenerator(null, loadSettings(workspaceId)));
   const generatorWorkspace = useRef(null);
@@ -97,12 +112,11 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
   const switchWorkspace = useCallback(id => {
     saveActiveWorkspace(id);
     setWorkspaceId(id);
-    setLocalPostsState(loadPosts(id));
     setSettingsState(loadSettings(id));
   }, []);
 
-  // ---------- Posts from Touchline HQ and the API (server) ----------
-  const [serverPosts, setServerPosts] = useState([]);
+  // ---------- Posts (server) ----------
+  const [posts, setPosts] = useState([]);
   const [serverState, setServerState] = useState({ loading: false, error: null, loaded: false });
   const shownWorkspace = useRef(activeId);
   shownWorkspace.current = activeId;
@@ -114,18 +128,49 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
     try {
       const data = await apiJson(`/api/workspaces/${id}/posts`);
       if (shownWorkspace.current !== id) return; // a slow reply for another workspace
-      setServerPosts(data.posts || []);
+      setPosts(data.posts || []);
       setServerState({ loading: false, error: null, loaded: true });
     } catch (error) {
       if (shownWorkspace.current === id) setServerState({ loading: false, error: error.message, loaded: true });
     }
   }, [activeId]);
 
+  // Drafts used to be kept in this browser. Move any still here to the server, once.
+  const moving = useRef(new Set());
+  const moveBrowserDrafts = useCallback(async id => {
+    const local = loadPosts(id);
+    if (!local.length || moving.current.has(id)) return;
+    moving.current.add(id);
+    const left = [];
+    let moved = 0;
+    for (const draft of local) {
+      try {
+        await apiJson(`/api/workspaces/${id}/posts`, { method: 'POST', body: JSON.stringify(browserDraftToServer(draft)) });
+        moved += 1;
+      } catch (error) {
+        console.error('Could not move a draft to the server:', error.message);
+        left.push(draft);
+      }
+    }
+    try { localStorage.setItem(`contentStudioPosts_${id}_moved`, JSON.stringify(local)); } catch {}
+    savePosts(id, left);
+    moving.current.delete(id);
+    if (moved) {
+      toast({ tone: 'success', title: `Moved ${moved} draft${moved === 1 ? '' : 's'} to the server`, body: 'They are now safe, and on every device you use.' });
+    }
+    if (left.length) {
+      toast({ tone: 'error', title: `${left.length} draft${left.length === 1 ? '' : 's'} could not be moved yet`, body: 'They stay in this browser and are tried again next time.' });
+    }
+  }, [toast]);
+
   useEffect(() => {
-    setServerPosts([]);
+    setPosts([]);
     setServerState({ loading: false, error: null, loaded: false });
-    reloadServerPosts();
-  }, [reloadServerPosts]);
+    (async () => {
+      await moveBrowserDrafts(activeId);
+      await reloadServerPosts();
+    })();
+  }, [activeId, moveBrowserDrafts, reloadServerPosts]);
 
   // Keep lists fresh while they are on screen
   useEffect(() => {
@@ -135,7 +180,7 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
     return () => clearInterval(timer);
   }, [page, reloadServerPosts]);
 
-  const items = useMemo(() => combinePosts(localPosts, serverPosts, workspace?.slug), [localPosts, serverPosts, workspace?.slug]);
+  const items = useMemo(() => toItems(posts), [posts]);
 
   const counts = useMemo(() => {
     const c = { approval: 0, upcoming: 0, published: 0, problems: 0, other: 0 };
@@ -143,79 +188,70 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
     return c;
   }, [items]);
 
-  // ---------- Actions on drafts made here ----------
+  // Put a changed post into the list straight away
+  const replacePost = useCallback(post => {
+    if (!post?.id) return;
+    setPosts(prev => (prev.some(p => p.id === post.id) ? prev.map(p => (p.id === post.id ? post : p)) : [post, ...prev]));
+  }, []);
 
-  const addDraft = useCallback(({ platform, content, pillar, image, scheduledFor, suggestedTime }) => {
-    const post = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      platform,
-      content,
-      pillar,
-      image: image || null,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      scheduledFor: scheduledFor || null,
-      suggestedTime: suggestedTime || null,
-    };
-    setLocalPosts(prev => [...prev, post]);
-    return post;
-  }, [setLocalPosts]);
+  // ---------- Actions ----------
 
-  const patchLocal = useCallback((id, changes) => {
-    setLocalPosts(prev => prev.map(p => (p.id === id ? { ...p, ...(typeof changes === 'function' ? changes(p) : changes) } : p)));
-  }, [setLocalPosts]);
+  const addDraft = useCallback(async ({ platform, content, pillar, image, scheduledFor }) => {
+    const data = await apiJson(`/api/workspaces/${activeId}/posts`, {
+      method: 'POST',
+      body: JSON.stringify({ platform, content, pillar, image, scheduledFor }),
+    });
+    replacePost(data.post);
+    return data.post;
+  }, [activeId, replacePost]);
 
-  // Approving sends the post to Publer when this workspace has a Publer key (X is posted by hand)
-  const approveLocal = useCallback(async id => {
-    const post = localPosts.find(p => p.id === id);
-    if (!post) return;
-
-    if (!workspace?.has_publer_key || post.platform === 'x') {
-      patchLocal(id, { status: 'approved', approvedAt: new Date().toISOString(), error: null });
-      toast({
-        tone: 'success',
-        title: 'Approved',
-        body: post.platform === 'x' ? 'Copy it and post it on X when it is time.' : 'Connect Publer in Settings to post it automatically.',
-      });
-      return;
+  // Approve, reject, cancel, retry, reopen or mark-posted a post
+  const serverAction = useCallback(async (item, action, force = false) => {
+    if (action === 'cancel' && !force) {
+      const ok = await confirm({ title: 'Cancel this post?', body: 'It is removed from Publer and will not go out.', confirmLabel: 'Cancel post', cancelLabel: 'Keep it', tone: 'danger' });
+      if (!ok) return;
     }
-
-    patchLocal(id, { status: 'publishing', error: null });
     try {
-      await apiJson('/api/publish', {
-        method: 'POST',
-        body: JSON.stringify({
-          workspaceId: workspace.id,
-          post: {
-            content: post.content,
-            platform: post.platform,
-            pillar: post.pillar,
-            image: post.image,
-            scheduledFor: isValidDate(post.scheduledFor) ? post.scheduledFor : null,
-          },
-        }),
-      });
-      patchLocal(id, { status: 'published', publishedAt: new Date().toISOString(), approvedAt: new Date().toISOString() });
-      toast({
-        tone: 'success',
-        title: isValidDate(post.scheduledFor) && new Date(post.scheduledFor) > new Date() ? 'Scheduled in Publer' : 'Sent to Publer',
-        body: `${PLATFORM_NAMES[post.platform]} post is on its way.`,
-      });
+      const data = await apiJson(`/api/workspaces/${activeId}/posts/${item.id}/${action}`, { method: 'POST', body: JSON.stringify({ force }) });
+      replacePost(data.post);
+      const message = doneMessages(action, data.post);
+      if (message) toast({ tone: 'success', ...message });
+      else toast({ tone: 'error', title: 'Publer did not take it', body: data.post.error || 'See the post for the reason.' });
     } catch (error) {
-      patchLocal(id, { status: 'approved', approvedAt: new Date().toISOString(), error: error.message });
-      toast({ tone: 'error', title: 'Publer did not take it', body: [error.message, error.hint].filter(Boolean).join(' ') });
+      if (error.status === 409 && !force && (action === 'cancel' || action === 'retry')) {
+        const ok = await confirm({
+          title: action === 'cancel' ? 'Not found in Publer' : 'Publer may already have it',
+          body: error.message,
+          confirmLabel: action === 'cancel' ? 'Mark it cancelled' : 'Send it again',
+        });
+        if (ok) return serverAction(item, action, true);
+      } else {
+        toast({ tone: 'error', title: `Could not ${action.replace('-', ' ')} this post`, body: error.message });
+      }
     }
-  }, [localPosts, workspace, patchLocal, toast]);
+    await reloadServerPosts();
+  }, [activeId, confirm, toast, reloadServerPosts, replacePost]);
 
-  const rejectLocal = useCallback(id => patchLocal(id, { status: 'rejected' }), [patchLocal]);
-  const returnLocal = useCallback(id => patchLocal(id, { status: 'pending', approvedAt: null, error: null }), [patchLocal]);
-  const editLocal = useCallback((id, content) => patchLocal(id, { content }), [patchLocal]);
-  const removeLocalImage = useCallback(id => patchLocal(id, { image: null }), [patchLocal]);
+  const editPost = useCallback(async (item, changes) => {
+    try {
+      const data = await apiJson(`/api/workspaces/${activeId}/posts/${item.id}`, { method: 'PATCH', body: JSON.stringify(changes) });
+      replacePost(data.post);
+      toast({ tone: 'success', title: 'Saved' });
+    } catch (error) {
+      toast({ tone: 'error', title: 'Could not save the change', body: error.message });
+    }
+  }, [activeId, replacePost, toast]);
 
-  const deleteLocal = useCallback(async id => {
-    const ok = await confirm({ title: 'Delete this post?', body: 'It is removed from this browser. This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' });
-    if (ok) setLocalPosts(prev => prev.filter(p => p.id !== id));
-  }, [confirm, setLocalPosts]);
+  const deletePost = useCallback(async item => {
+    const ok = await confirm({ title: 'Delete this post?', body: 'It is removed from Content Studio. This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' });
+    if (!ok) return;
+    try {
+      await apiJson(`/api/workspaces/${activeId}/posts/${item.id}`, { method: 'DELETE' });
+      setPosts(prev => prev.filter(p => p.id !== item.id));
+    } catch (error) {
+      toast({ tone: 'error', title: 'Could not delete it', body: error.message });
+    }
+  }, [activeId, confirm, toast]);
 
   const copyText = useCallback(async text => {
     try {
@@ -226,40 +262,13 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
     }
   }, [toast]);
 
-  // ---------- Actions on server posts (Touchline HQ, API) ----------
-
-  const serverAction = useCallback(async (item, action, force = false) => {
-    if (action === 'cancel' && !force) {
-      const ok = await confirm({ title: 'Cancel this post?', body: 'It is removed from Publer and will not go out.', confirmLabel: 'Cancel post', cancelLabel: 'Keep it', tone: 'danger' });
-      if (!ok) return;
-    }
-    try {
-      await apiJson(`/api/workspaces/${activeId}/posts/${item.id}/${action}`, { method: 'POST', body: JSON.stringify({ force }) });
-      const done = { cancel: 'Post cancelled', approve: 'Approved and sent to Publer', retry: 'Sent to Publer again' };
-      toast({ tone: 'success', title: done[action] || 'Done' });
-    } catch (error) {
-      if (error.status === 409 && !force && (action === 'cancel' || action === 'retry')) {
-        const ok = await confirm({
-          title: action === 'cancel' ? 'Not found in Publer' : 'Publer may already have it',
-          body: error.message,
-          confirmLabel: action === 'cancel' ? 'Mark it cancelled' : 'Send it again',
-        });
-        if (ok) return serverAction(item, action, true);
-      } else {
-        toast({ tone: 'error', title: `Could not ${action} this post`, body: error.message });
-      }
-    }
-    await reloadServerPosts();
-  }, [activeId, confirm, toast, reloadServerPosts]);
-
   const value = {
     page, param, navigate,
     serverConfig, workspaces, workspace, switchWorkspace, updateWorkspace,
     settings, updateSettings,
-    localPosts, serverPosts, serverState, reloadServerPosts, items, counts,
+    posts, serverState, reloadServerPosts, items, counts,
     generator, setGenerator,
-    addDraft, approveLocal, rejectLocal, returnLocal, editLocal, removeLocalImage, deleteLocal, copyText,
-    serverAction,
+    addDraft, serverAction, editPost, deletePost, copyText,
   };
 
   return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>;
