@@ -18,6 +18,8 @@ export async function startFakePubler() {
     scheduleDelayMs: 0,
     scheduleStatus: null,   // e.g. 503: /posts/schedule answers with this error
     jobStatusCode: null,    // e.g. 429: /job_status answers with this error
+    analyticsStatus: null,  // e.g. 403: the key has no Analytics permission
+    analyticsCalls: 0,
   };
   let nextId = 1;
 
@@ -52,6 +54,26 @@ export async function startFakePubler() {
       if (req.method === 'GET' && job) {
         if (state.jobStatusCode) return send(state.jobStatusCode, { message: 'Too many requests' });
         return send(200, state.jobs.get(job[1]) || { status: 'working' });
+      }
+      // Per-post numbers for published posts, some as plain numbers and some as { name, value }
+      const insights = path.match(/^\/analytics\/([^/]+)\/post_insights$/);
+      if (req.method === 'GET' && insights) {
+        state.analyticsCalls += 1;
+        if (state.analyticsStatus) return send(state.analyticsStatus, { message: 'Requires analytics access' });
+        if (!url.searchParams.get('from') || !url.searchParams.get('to')) return send(500, { message: 'from and to are required' });
+        if (Number(url.searchParams.get('page') || 0) > 0) return send(200, { posts: [], total: 0 });
+        const found = state.posts
+          .filter(p => p.state === 'published' && p.account_id === insights[1])
+          .map((p, i) => ({
+            id: p.id, text: p.text, account_id: p.account_id, scheduled_at: p.scheduled_at, post_link: p.post_link,
+            analytics: {
+              reach: { name: 'Reach', value: 400 + i * 10 },
+              engagement: 30 + i,
+              engagement_rate: { name: 'Engagement rate', value: 7.5 },
+              likes: 20 + i, comments: { name: 'Comments', value: 5 }, shares: 3,
+            },
+          }));
+        return send(200, { posts: found, total: found.length });
       }
       if (req.method === 'GET' && path === '/posts') {
         const wanted = url.searchParams.get('state');

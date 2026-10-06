@@ -11,6 +11,7 @@ import { createStore } from './server/store.js';
 import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js';
 import * as publer from './server/publer.js';
 import { createPostService, toApiPost, PostError, PLATFORMS } from './server/posts.js';
+import { createEngagementService } from './server/engagement.js';
 import { checkContent, prepareForPublishing } from './shared/brand.js';
 import { makePostImage } from './server/cards.js';
 
@@ -33,6 +34,7 @@ const store = createStore(supabase);
 
 // Posts from Touchline HQ and the v1 API, and the scheduler that sends them to Publer
 const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage: makePostImage });
+const engagementService = createEngagementService({ store, posts: postService, getWorkspaceSecrets });
 
 // ============ CONTEXT HELPER FUNCTIONS ============
 
@@ -1252,7 +1254,7 @@ app.post('/api/v1/content/submit', async (req, res) => {
       })),
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
@@ -1268,7 +1270,7 @@ app.get('/api/v1/content/queue', async (req, res) => {
         platform: p.platform,
         content: p.content,
         pillar: p.pillar || null,
-        image: p.image ? `/api/posts/${p.id}/image` : null,
+        image: p.image || p.image_ref ? `/api/posts/${p.id}/image` : null,
         status: p.status,
         source: p.source || null,
         scheduled_for: p.scheduled_for || null,
@@ -1392,13 +1394,17 @@ app.get('/api/posts', async (req, res) => {
 });
 
 // A post's image card
+async function sendPostImage(res, post) {
+  if (post.image && !post.image_ref && !post.image.startsWith('data:')) return res.redirect(post.image);
+  const image = await postService.readImage(post);
+  if (!image) return res.status(404).json({ error: 'This post has no image' });
+  res.set({ 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+  res.type(image.type).send(image.buffer);
+}
+
 app.get('/api/posts/:id/image', async (req, res) => {
   try {
-    const post = await postService.getForWorkspace(req.workspace.id, req.params.id);
-    if (!post.image) return res.status(404).json({ error: 'This post has no image' });
-    if (!post.image.startsWith('data:')) return res.redirect(post.image);
-    const [meta, data] = post.image.split(',');
-    res.type(meta.slice(5).split(';')[0] || 'image/png').send(Buffer.from(data, 'base64'));
+    await sendPostImage(res, await postService.getForWorkspace(req.workspace.id, req.params.id));
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
   }
@@ -1413,9 +1419,14 @@ async function workspaceFromParams(req) {
 }
 
 function uiPost(workspace, post) {
+  const hasImage = post.image || post.image_ref;
   return {
     ...toApiPost(post),
-    image: post.image || null,
+    // A web address is shown as it is; stored images come from this workspace's image route
+    image: !hasImage ? null
+      : post.image && !post.image_ref && !post.image.startsWith('data:') ? post.image
+        : `/api/workspaces/${workspace.id}/posts/${post.id}/image?v=${encodeURIComponent(post.image_ref || post.updated_at || '')}`,
+    manual: !!post.manual,
     imageError: post.image_error || null,
     autoSchedule: !!post.auto_schedule,
     warnings: checkContent(workspace.slug, post.content),
@@ -1432,17 +1443,89 @@ app.get('/api/workspaces/:id/posts', async (req, res) => {
   }
 });
 
-for (const action of ['cancel', 'approve', 'retry']) {
+function sendPostError(res, error, action) {
+  if (!(error instanceof PostError)) console.error(`[posts] ${action} failed:`, error.message);
+  res.status(error.status || 500).json({ error: error.message, code: error.code });
+}
+
+// A draft written in Content Studio, kept on the server so it is safe and seen on every device.
+// Drafts moved from a browser send `localId`, so sending one twice only saves it once.
+app.post('/api/workspaces/:id/posts', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    const post = await postService.createStudioDraft(workspace, req.body || {});
+    res.json({ post: uiPost(workspace, post) });
+  } catch (error) {
+    sendPostError(res, error, 'create');
+  }
+});
+
+app.patch('/api/workspaces/:id/posts/:postId', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    const { content, image, scheduledFor } = req.body || {};
+    const post = await postService.editDraft(workspace, req.params.postId, { content, image, scheduledFor });
+    res.json({ post: uiPost(workspace, post) });
+  } catch (error) {
+    sendPostError(res, error, 'edit');
+  }
+});
+
+app.delete('/api/workspaces/:id/posts/:postId', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    res.json(await postService.deletePost(workspace, req.params.postId));
+  } catch (error) {
+    sendPostError(res, error, 'delete');
+  }
+});
+
+app.get('/api/workspaces/:id/posts/:postId/image', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    await sendPostImage(res, await postService.getForWorkspace(workspace.id, req.params.postId));
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+const POST_ACTIONS = { cancel: 'cancel', approve: 'approve', retry: 'retry', reject: 'reject', reopen: 'reopen', 'mark-posted': 'markPosted' };
+for (const [action, method] of Object.entries(POST_ACTIONS)) {
   app.post(`/api/workspaces/:id/posts/:postId/${action}`, async (req, res) => {
     try {
       const workspace = await workspaceFromParams(req);
-      const post = await postService[action](workspace, req.params.postId, { force: req.body?.force === true });
+      const post = await postService[method](workspace, req.params.postId, { force: req.body?.force === true });
       res.json({ post: uiPost(workspace, post) });
     } catch (error) {
-      if (!(error instanceof PostError)) console.error(`[posts] ${action} failed:`, error.message);
-      res.status(error.status || 500).json({ error: error.message, code: error.code });
+      sendPostError(res, error, action);
     }
   });
+}
+
+// Likes, comments, shares and reach from Publer's analytics
+app.get('/api/workspaces/:id/engagement', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    res.json({ status: await engagementService.status(workspace) });
+  } catch (error) {
+    sendPostError(res, error, 'engagement');
+  }
+});
+
+app.post('/api/workspaces/:id/engagement/refresh', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    res.json({ status: await engagementService.refresh(workspace, { force: true }) });
+  } catch (error) {
+    sendPostError(res, error, 'engagement refresh');
+  }
+});
+
+// Each workspace's numbers are refreshed every few hours (Publer itself updates about once a day)
+async function refreshAllEngagement() {
+  for (const workspace of await getWorkspaces()) {
+    await engagementService.refresh(workspace).catch(error => console.error('[engagement]', error.message));
+  }
 }
 
 // Health check endpoint (public; Touchline HQ checks it)
@@ -1463,4 +1546,6 @@ app.get('*', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   postService.startScheduler();
+  setTimeout(refreshAllEngagement, 60 * 1000).unref();
+  setInterval(refreshAllEngagement, 30 * 60 * 1000).unref();
 });

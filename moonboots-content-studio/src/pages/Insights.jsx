@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useStudio } from '../studio.jsx';
-import { Badge, Card, PageHeader, Segmented, SectionTitle, cx } from '../components/ui.jsx';
+import { Badge, Button, Card, PageHeader, Segmented, SectionTitle, cx } from '../components/ui.jsx';
 import { Icon, PlatformIcon } from '../components/icons.jsx';
-import { PLATFORM_NAMES } from '../lib/posts.js';
-import { isValidDate, postingTimesFor } from '../lib/schedule.js';
+import { PLATFORM_NAMES, engagementsOf } from '../lib/posts.js';
+import { formatWhen, isValidDate, postingTimesFor } from '../lib/schedule.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const WEEK = 7 * DAY;
@@ -64,8 +64,96 @@ const WeeklyBars = ({ weeks }) => {
   );
 };
 
+const n = v => Number(v || 0).toLocaleString('en-GB');
+const sum = (list, key) => list.reduce((total, i) => total + (Number(i.metrics?.[key]) || 0), 0);
+
+// How posts are doing: reach, engagements and the best posts, from Publer's analytics
+const Engagement = ({ inRange, range, status, onRefresh }) => {
+  const [refreshing, setRefreshing] = useState(false);
+  const measured = inRange.filter(i => i.metrics);
+  const reach = sum(measured, 'reach');
+  const engagements = measured.reduce((total, i) => total + engagementsOf(i.metrics), 0);
+  const top = [...measured].sort((a, b) => engagementsOf(b.metrics) - engagementsOf(a.metrics)).slice(0, 5);
+  const byPlatform = PLATFORMS.map(p => ({
+    key: p,
+    label: PLATFORM_NAMES[p],
+    value: measured.filter(i => i.platform === p).reduce((total, i) => total + engagementsOf(i.metrics), 0),
+    icon: <PlatformIcon platform={p} className="w-3.5 h-3.5 text-muted" />,
+  }));
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await onRefresh();
+    setRefreshing(false);
+  };
+
+  return (
+    <Card className="p-5 mb-6">
+      <SectionTitle action={(
+        <span className="flex items-center gap-2">
+          {status?.checked_at && <span className="text-[11px] text-faint hidden sm:inline">Checked {formatWhen(status.checked_at)}</span>}
+          <Button size="sm" variant="ghost" icon="refresh" loading={refreshing} onClick={refresh}>Refresh</Button>
+        </span>
+      )}
+      >
+        How posts are doing, last {range} days
+      </SectionTitle>
+
+      {status?.ok === false && (
+        <div className="flex gap-2.5 p-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-200 leading-relaxed">
+          <Icon name="alert" className="w-4 h-4 shrink-0" />
+          <p>{status.error}</p>
+        </div>
+      )}
+
+      {measured.length === 0 ? (
+        <p className="text-sm text-muted py-2">
+          No numbers yet. Publer collects likes, comments, shares and reach from each network about once a day,
+          so a post shows up here the day after it goes out. LinkedIn profiles and X give little or none.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <Tile label="Reach" value={n(reach)} note={`Across ${measured.length} post${measured.length === 1 ? '' : 's'}`} />
+            <Tile label="Engagements" value={n(engagements)} note={`${n(sum(measured, 'likes'))} likes, ${n(sum(measured, 'comments'))} comments, ${n(sum(measured, 'shares'))} shares`} />
+            <Tile label="Engagement rate" value={reach ? `${((engagements / reach) * 100).toFixed(1)}%` : 'n/a'} note="Engagements as a share of reach" />
+            <Tile label="Per post" value={n(Math.round(engagements / measured.length))} note="Average engagements" />
+          </div>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+            <div className="lg:col-span-3 min-w-0">
+              <p className="text-xs font-medium text-muted mb-2">Best posts</p>
+              <ul className="divide-y divide-line/40">
+                {top.map(i => (
+                  <li key={i.key} className="py-2.5 flex items-start gap-3">
+                    <span className="w-8 h-8 rounded-lg bg-raised flex items-center justify-center text-ink shrink-0"><PlatformIcon platform={i.platform} className="w-3.5 h-3.5" /></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm text-ink truncate">{i.content.split('\n')[0]}</span>
+                      <span className="block text-[11px] text-faint">
+                        {formatWhen(i.when)} · {n(engagementsOf(i.metrics))} engagements{Number.isFinite(i.metrics.reach) ? ` · ${n(i.metrics.reach)} reach` : ''}
+                      </span>
+                    </span>
+                    {i.postUrl && (
+                      <a href={i.postUrl} target="_blank" rel="noreferrer" className="p-2 rounded-lg text-muted hover:text-accent" aria-label="View the live post">
+                        <Icon name="link" className="w-4 h-4" />
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="lg:col-span-2 min-w-0">
+              <p className="text-xs font-medium text-muted mb-2">Engagements by platform</p>
+              <BarList rows={byPlatform} />
+            </div>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+};
+
 export default function Insights() {
-  const { items, workspace, counts } = useStudio();
+  const { items, workspace, counts, engagement, refreshEngagement } = useStudio();
   const [range, setRange] = useState(30);
   const now = Date.now();
 
@@ -118,7 +206,7 @@ export default function Insights() {
     <>
       <PageHeader
         title="Insights"
-        subtitle="What has gone out, and how it compares with your posting targets."
+        subtitle="How your posts are doing, what has gone out, and how often you post."
         actions={(
           <Segmented
             value={range}
@@ -127,6 +215,8 @@ export default function Insights() {
           />
         )}
       />
+
+      <Engagement inRange={inRange} range={range} status={engagement} onRefresh={refreshEngagement} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <Tile label={`Published, last ${range} days`} value={inRange.length} note={`${(inRange.length / (range / 7)).toFixed(1)} a week`} />
@@ -179,10 +269,10 @@ export default function Insights() {
       </Card>
 
       <div className="flex gap-3 p-4 rounded-2xl border border-line/60 bg-raised/30 text-sm text-muted">
-        <Icon name="insights" className="w-5 h-5 text-faint flex-shrink-0" />
+        <Icon name="insights" className="w-5 h-5 text-faint shrink-0" />
         <p>
-          These numbers come from posts sent through Content Studio. Likes, comments and reach live in Publer's analytics,
-          which this app does not read yet.
+          Activity counts come from posts sent through Content Studio. Likes, comments, shares and reach come from
+          Publer's analytics and are checked every few hours.
         </p>
       </div>
     </>

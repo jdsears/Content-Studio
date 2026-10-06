@@ -157,7 +157,10 @@ test('a post Publer refuses is marked failed with its reason', async () => {
 test('generateImage attaches a card and uploads it to Publer', async () => {
   const before = fake.state.media;
   const post = await service.createScheduledPost(workspace, { platform: 'linkedin', content: 'With a card', generateImage: true });
-  assert.ok(post.image.startsWith('data:image/png'));
+  // The image is stored on its own, not inside the post
+  assert.equal(post.image, null);
+  assert.match(post.image_ref, /^(file|store):post_/);
+  assert.ok((await service.imageFor(post)).startsWith('data:image/png'));
   assert.equal(fake.state.media, before + 1);
 });
 

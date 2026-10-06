@@ -59,7 +59,7 @@ const ListView = ({ filter, items }) => {
     <div className="space-y-6">
       {groupByDay(list).map(group => (
         <section key={group.key}>
-          <h3 className="sticky top-14 lg:top-0 z-10 -mx-1 px-1 py-2 bg-bg/90 backdrop-blur text-xs font-semibold uppercase tracking-wider text-faint">
+          <h3 className="sticky top-14 lg:top-0 z-10 -mx-1 px-1 py-2 bg-bg/90 backdrop-blur-sm text-xs font-semibold uppercase tracking-wider text-faint">
             {group.label} <span className="font-normal normal-case tracking-normal">· {group.items.length}</span>
           </h3>
           <div className="space-y-3 mt-1">
@@ -167,8 +167,8 @@ const CalendarView = ({ items }) => {
                 <span className="hidden sm:flex flex-col gap-1 mt-1">
                   {dayItems.slice(0, 3).map(item => (
                     <span key={item.key} className="flex items-center gap-1 text-[10px] text-muted truncate">
-                      <span className={cx('w-1.5 h-1.5 rounded-full flex-shrink-0', DOT[item.group])} />
-                      <PlatformIcon platform={item.platform} className="w-2.5 h-2.5 flex-shrink-0" />
+                      <span className={cx('w-1.5 h-1.5 rounded-full shrink-0', DOT[item.group])} />
+                      <PlatformIcon platform={item.platform} className="w-2.5 h-2.5 shrink-0" />
                       <span className="tabular-nums">{formatTime(item.when)}</span>
                     </span>
                   ))}
@@ -224,7 +224,7 @@ export default function Schedule() {
 
       {serverState.error && (
         <div className="mb-4 flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-200">
-          <Icon name="alert" className="w-4 h-4 flex-shrink-0" />
+          <Icon name="alert" className="w-4 h-4 shrink-0" />
           Could not load posts from the server: {serverState.error}
         </div>
       )}

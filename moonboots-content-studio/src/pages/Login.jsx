@@ -59,10 +59,10 @@ export default function Login({ passwordSet, serverError, onLoggedIn }) {
           <p className="text-sm text-muted mt-1.5">Write, approve and schedule posts for every brand.</p>
         </div>
 
-        <div className="rounded-2xl border border-line/60 bg-surface/90 backdrop-blur p-6 space-y-4 shadow-2xl">
+        <div className="rounded-2xl border border-line/60 bg-surface/90 backdrop-blur-sm p-6 space-y-4 shadow-2xl">
           {!passwordSet && (
             <p className="flex gap-2 p-3 text-xs rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200">
-              <Icon name="alert" className="w-4 h-4 flex-shrink-0" />
+              <Icon name="alert" className="w-4 h-4 shrink-0" />
               ADMIN_PASSWORD is not set on the server yet. Add it in Railway &gt; Variables, then reload.
             </p>
           )}

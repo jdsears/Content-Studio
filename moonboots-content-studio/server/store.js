@@ -50,6 +50,7 @@ function fileStore(dir, persistent) {
   return {
     type: 'file',
     persistent,
+    dir,
     async get(collection, id) {
       const db = await load();
       return db[collection]?.[id] ?? null;

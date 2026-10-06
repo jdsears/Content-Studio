@@ -225,6 +225,19 @@ export async function schedulePost(apiKey, publerWorkspaceId, { accountId, platf
   return { jobId: data?.job_id || null, scheduledAt: when, data };
 }
 
+// ============ ANALYTICS ============
+
+// Per-post numbers for one account: [{ id, text, post_link, account_id, analytics: { reach, likes, ... } }].
+// `from` and `to` are dates (YYYY-MM-DD); pages start at 0. Needs the key's Analytics permission.
+export async function getPostInsights(apiKey, publerWorkspaceId, accountId, { from, to, page = 0 }) {
+  const data = await request(apiKey, `/analytics/${encodeURIComponent(accountId)}/post_insights`, {
+    workspaceId: publerWorkspaceId,
+    query: { from, to, page },
+  });
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.posts) ? data.posts : [];
+}
+
 function failureMessage(payload) {
   const failures = payload?.failures;
   const list = Array.isArray(failures) ? failures : failures && typeof failures === 'object' ? Object.values(failures).flat() : [];
@@ -278,6 +291,9 @@ export async function deletePosts(apiKey, publerWorkspaceId, postIds) {
 
 // Text compared without links (Publer may shorten them) or spacing differences
 const comparable = (text) => String(text || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+// The same post text, ignoring links and spacing
+export const sameText = (a, b) => !!comparable(a) && comparable(a) === comparable(b);
 const postTime = (p) => p.scheduled_at || p.published_at || p.date || null;
 const TIME_TOLERANCE_MS = 2 * 60 * 60 * 1000;
 

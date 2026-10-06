@@ -3,6 +3,7 @@ import * as publer from './publer.js';
 import { PublerError } from './publer.js';
 import { nextPostingSlot, parseUkDateTime } from './schedule.js';
 import { prepareForPublishing } from '../shared/brand.js';
+import { createImageStore, isDataUrl } from './images.js';
 
 // ============ SERVER-SIDE POSTS (Marcus and other API posts) ============
 //
@@ -13,6 +14,13 @@ import { prepareForPublishing } from '../shared/brand.js';
 //   failed     Publer refused it, or it was never confirmed live
 //   cancelled  cancelled in Content Studio (and deleted from Publer)
 // API posts that need approval in Content Studio start as "pending".
+//
+// Drafts written in Content Studio (source "studio") live here too, so they are kept on
+// the server rather than in one browser:
+//   pending    waiting for approval
+//   approved   approved, to be posted by hand (X, or no Publer key yet)
+//   rejected   turned down; can go back to approvals
+// Approving any other draft sends it through the same queued -> scheduled -> published flow.
 
 export const PLATFORMS = ['linkedin', 'facebook', 'instagram', 'x'];
 
@@ -59,8 +67,10 @@ export function toApiPost(p) {
     source: p.source || null,
     publishedAt: p.published_at || null,
     scheduledFor: p.scheduled_for || null,
-    image: p.image ? `/api/posts/${p.id}/image` : null,
-    metrics: p.metrics || { likes: 0, comments: 0, shares: 0 },
+    image: p.image || p.image_ref ? `/api/posts/${p.id}/image` : null,
+    metrics: { likes: 0, comments: 0, shares: 0, ...(p.metrics || {}) },
+    // The same numbers under the name Touchline HQ's sync reads
+    engagement: p.metrics || null,
     error: p.error || null,
     createdAt: p.created_at,
     platformPostId: p.publer_post_id || null,
@@ -68,7 +78,7 @@ export function toApiPost(p) {
   };
 }
 
-export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage }) {
+export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage, images = createImageStore(store) }) {
   async function get(id) {
     return store.get(COLLECTION, id);
   }
@@ -89,7 +99,61 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
   }
 
   async function remove(id) {
+    const post = await get(id);
     await store.remove(COLLECTION, id);
+    if (post?.image_ref) await images.remove(post.image_ref);
+  }
+
+  // ---------- Images ----------
+
+  // An image ready to put on a post: a data URL is stored on its own (under a new name),
+  // a web address stays on the post. Nothing is deleted here.
+  async function prepareImage(postId, image) {
+    if (isDataUrl(image)) return { image: null, image_ref: await images.put(postId, image) };
+    if (typeof image === 'string' && image.trim().startsWith('data:')) {
+      throw new PostError('Images must be PNG, JPEG, WebP or GIF.');
+    }
+    return { image: typeof image === 'string' && image.trim() ? image.trim() : null, image_ref: null };
+  }
+
+  // The image as a data URL or web address, for Publer
+  async function imageFor(post) {
+    if (post.image_ref) return images.toDataUrl(post.image_ref);
+    return post.image || null;
+  }
+
+  async function readImage(post) {
+    if (post.image_ref) return images.read(post.image_ref);
+    if (isDataUrl(post.image)) {
+      const [meta, data] = post.image.split(',');
+      return { type: meta.slice(5).split(';')[0] || 'image/png', buffer: Buffer.from(data, 'base64') };
+    }
+    return null;
+  }
+
+  // Older posts kept their image inline. Move those out, once.
+  async function moveInlineImages() {
+    let moved = 0;
+    for (const post of await list()) {
+      if (!isDataUrl(post.image)) continue;
+      try {
+        const latest = await get(post.id);
+        if (!isDataUrl(latest?.image)) continue;
+        const ref = await images.put(post.id, latest.image);
+        // Only if nothing changed the post meanwhile (a cancel must never be undone)
+        const current = await get(post.id);
+        if (!current || current.image !== latest.image) {
+          await images.remove(ref);
+          continue;
+        }
+        await save({ ...current, image: null, image_ref: ref });
+        moved += 1;
+      } catch (error) {
+        console.error(`[posts] Could not move the image for ${post.id}:`, error.message);
+      }
+    }
+    if (moved) console.log(`[posts] Moved ${moved} image(s) out of the store file`);
+    return moved;
   }
 
   async function list({ workspaceId, status, source, platform, limit } = {}) {
@@ -229,7 +293,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       if (typeof post.content !== 'string' || !post.content.trim()) throw new PostError('This post has no text.');
       ctx = await publerContext(workspace);
       accountId = await publer.resolveAccountId(ctx.apiKey, ctx.publerWorkspaceId, post.platform, ctx.platformAccounts[post.platform]);
-      mediaId = await publer.uploadMedia(ctx.apiKey, ctx.publerWorkspaceId, post.image);
+      mediaId = await publer.uploadMedia(ctx.apiKey, ctx.publerWorkspaceId, await imageFor(post));
       text = prepareForPublishing(workspace, post);
     } catch (error) {
       return recordFailure(post, attempt, error);
@@ -332,6 +396,8 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       }
     } catch (error) {
       if (overdue) return giveUp();
+      // A post that is already out keeps a clean record; the check simply runs again later
+      if (post.status === 'published') return update(post.id, null, checked);
       return update(post.id, null, { ...checked, error: error.message });
     }
 
@@ -392,7 +458,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
 
     if (generateImage && makeImage) {
       try {
-        post.image = await makeImage(workspace, post);
+        post = { ...post, ...(await prepareImage(post.id, await makeImage(workspace, post))) };
       } catch (error) {
         console.error(`[posts] Image card failed for ${post.id}:`, error.message);
         post.image_error = error.message;
@@ -405,14 +471,129 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
   }
 
   // A post saved for approval in Content Studio (v1 API)
-  async function createDraft(workspace, fields) {
-    return save({
+  async function createDraft(workspace, { image, ...fields }) {
+    const post = {
       id: newPostId(),
       workspace_id: workspace.id,
       auto_schedule: false,
       created_at: nowIso(),
       ...fields,
+    };
+    return save({ ...post, ...(await prepareImage(post.id, image ?? null)) });
+  }
+
+  const toIso = value => {
+    if (!value) return null;
+    const when = parseUkDateTime(value);
+    if (Number.isNaN(when.getTime())) throw new PostError('That posting time is not a date and time.');
+    return when.toISOString();
+  };
+
+  // Drafts being moved from a browser right now, so two tabs sending the same one save it once
+  const importing = new Map();
+
+  // A draft written in Content Studio. `localId` lets a draft moved from a browser be sent twice safely.
+  async function createStudioDraft(workspace, input = {}) {
+    const key = input.localId ? `${workspace.id}:${input.localId}` : null;
+    if (!key) return createStudioDraftNow(workspace, input);
+    if (!importing.has(key)) {
+      importing.set(key, createStudioDraftNow(workspace, input).finally(() => importing.delete(key)));
+    }
+    return importing.get(key);
+  }
+
+  async function createStudioDraftNow(workspace, { platform, content, pillar, image, scheduledFor, localId, status, createdAt, publishedAt } = {}) {
+    if (!PLATFORMS.includes(platform)) throw new PostError(`platform must be one of: ${PLATFORMS.join(', ')}`);
+    if (typeof content !== 'string' || !content.trim()) throw new PostError('The post has no text.');
+    if (localId) {
+      const existing = (await list({ workspaceId: workspace.id })).find(p => p.local_id === String(localId));
+      if (existing) return existing;
+    }
+    // Only drafts moved from a browser arrive with a status other than pending
+    const allowed = ['pending', 'approved', 'rejected', 'published', 'scheduled'];
+    const initial = localId && allowed.includes(status) ? status : 'pending';
+    const scheduled = toIso(scheduledFor);
+    const id = newPostId();
+    return save({
+      id,
+      workspace_id: workspace.id,
+      platform,
+      content,
+      pillar: pillar || null,
+      source: 'studio',
+      auto_schedule: false,
+      status: initial,
+      manual: initial === 'approved' || undefined,
+      scheduled_for: scheduled,
+      published_at: initial === 'published' ? (publishedAt || scheduled || nowIso()) : null,
+      local_id: localId ? String(localId) : undefined,
+      created_at: createdAt && !Number.isNaN(new Date(createdAt).getTime()) ? new Date(createdAt).toISOString() : nowIso(),
+      ...(await prepareImage(id, image ?? null)),
     });
+  }
+
+  const EDITABLE = ['pending', 'approved', 'rejected', 'queued'];
+  // Still a draft: not approved for Publer, and not being sent right now
+  const isDraft = post => EDITABLE.includes(post.status) && !post.auto_schedule && !inFlight.has(post.id);
+
+  // Change a draft's text, image or time before it goes to Publer
+  async function editDraft(workspace, postId, { content, image, scheduledFor } = {}) {
+    const post = await getForWorkspace(workspace.id, postId);
+    if (!isDraft(post)) throw new PostError(`This post is ${post.status}, so it can't be edited here.`, 409);
+    const changes = {};
+    if (content !== undefined) {
+      if (typeof content !== 'string' || !content.trim()) throw new PostError('The post has no text.');
+      changes.content = content;
+    }
+    if (scheduledFor !== undefined) changes.scheduled_for = toIso(scheduledFor);
+    if (image !== undefined) Object.assign(changes, await prepareImage(post.id, image));
+
+    // Check again right before saving: it may have been approved while the image was stored
+    const current = await get(post.id);
+    if (!current || !isDraft(current)) {
+      if (changes.image_ref) await images.remove(changes.image_ref);
+      throw new PostError('This post was approved or changed while you were editing it. Nothing was saved.', 409);
+    }
+    const saved = await save({ ...current, ...changes });
+    // The old image goes only once the post points at the new one
+    if (image !== undefined && current.image_ref && current.image_ref !== saved.image_ref) await images.remove(current.image_ref);
+    return saved;
+  }
+
+  async function reject(workspace, postId) {
+    const post = await getForWorkspace(workspace.id, postId);
+    if (post.status !== 'pending' || post.auto_schedule) throw new PostError(`This post is ${post.status}, so it can't be rejected.`, 409);
+    return update(post.id, ['pending'], { status: 'rejected', rejected_at: nowIso() });
+  }
+
+  // Back to the approval list
+  async function reopen(workspace, postId) {
+    const post = await getForWorkspace(workspace.id, postId);
+    if (!['rejected', 'approved'].includes(post.status)) throw new PostError(`This post is ${post.status}, so it can't go back to approvals.`, 409);
+    return update(post.id, ['rejected', 'approved'], { status: 'pending', manual: false, error: null, error_code: null });
+  }
+
+  // A post approved to go out by hand has been posted
+  async function markPosted(workspace, postId) {
+    const post = await getForWorkspace(workspace.id, postId);
+    if (post.status !== 'approved') throw new PostError(`This post is ${post.status}.`, 409);
+    return update(post.id, ['approved'], { status: 'published', published_at: nowIso() });
+  }
+
+  // Delete a post that is not in Publer. Scheduled posts are cancelled first instead.
+  const onItsWay = post => post.status === 'scheduled' || (post.status === 'queued' && post.auto_schedule) || inFlight.has(post.id);
+
+  async function deletePost(workspace, postId) {
+    const post = await getForWorkspace(workspace.id, postId);
+    if (onItsWay(post)) throw new PostError('This post is on its way to Publer. Cancel it first.', 409);
+    if (post.status === 'published' && !post.manual && post.source !== 'studio') {
+      throw new PostError('Published posts stay in the history.', 409);
+    }
+    // Check again right before removing it, in case it was approved meanwhile
+    const current = await get(post.id);
+    if (current && onItsWay(current)) throw new PostError('This post is on its way to Publer. Cancel it first.', 409);
+    await remove(post.id);
+    return { id: post.id, deleted: true };
   }
 
   async function approve(workspace, postId) {
@@ -420,9 +601,22 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     if (!['pending', 'queued'].includes(post.status) || post.auto_schedule) {
       throw new PostError(`This post is already ${post.status === 'queued' ? 'on its way to Publer' : post.status}.`);
     }
-    const scheduledFor = post.scheduled_for && new Date(post.scheduled_for) > new Date()
+
+    if (post.source === 'studio') {
+      // X is posted by hand, and so is everything until the workspace has a Publer key
+      const secrets = await getWorkspaceSecrets(workspace.id);
+      if (post.platform === 'x' || !secrets.publer_api_key) {
+        return update(post.id, ['pending'], { status: 'approved', manual: true, approved_at: nowIso(), error: null });
+      }
+    }
+
+    const future = post.scheduled_for && new Date(post.scheduled_for) > new Date();
+    // A Content Studio draft with no time (or a time now past) goes out straight away
+    const scheduledFor = future
       ? post.scheduled_for
-      : (await nextSlotFor(workspace, post.platform)).toISOString();
+      : post.source === 'studio'
+        ? new Date(Date.now() + 2 * MINUTE).toISOString()
+        : (await nextSlotFor(workspace, post.platform)).toISOString();
     await update(post.id, ['pending', 'queued'], {
       auto_schedule: true, status: 'queued', scheduled_for: scheduledFor, retry_from: nowIso(),
     });
@@ -505,7 +699,8 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
             await submit(post.id);
           } else if (post.status === 'scheduled' && new Date(post.scheduled_for).getTime() <= now - MINUTE && since(post.last_checked_at) >= RETRY_EVERY_MS) {
             await checkLive(post.id);
-          } else if (post.status === 'published' && !post.post_url && since(post.published_at) <= LINK_WAIT_MS && since(post.last_checked_at) >= 2 * RETRY_EVERY_MS) {
+          } else if (post.status === 'published' && !post.post_url && post.publer_job_id && since(post.published_at) <= LINK_WAIT_MS && since(post.last_checked_at) >= 2 * RETRY_EVERY_MS) {
+            // Only posts sent through Publer here; posts marked as posted by hand have no Publer link
             await checkLive(post.id);
           }
         } catch (error) {
@@ -520,6 +715,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
   }
 
   function startScheduler() {
+    moveInlineImages().catch(error => console.error('[posts] Moving images failed:', error.message));
     setTimeout(runChecks, 10 * 1000).unref();
     setInterval(runChecks, CHECK_EVERY_MS).unref();
   }
@@ -527,6 +723,8 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
   return {
     get, save, update, remove, list, getForWorkspace, nextSlotFor,
     createScheduledPost, createDraft, approve, retry, cancel,
+    createStudioDraft, editDraft, reject, reopen, markPosted, deletePost,
+    imageFor, readImage, moveInlineImages,
     submit, checkLive, runChecks, startScheduler,
   };
 }

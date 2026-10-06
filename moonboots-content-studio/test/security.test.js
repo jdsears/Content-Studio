@@ -86,6 +86,12 @@ test('admin routes need the login', async () => {
     ['POST', '/api/generate', { topic: 't', platforms: { linkedin: true } }],
     ['GET', '/api/config'],
     ['PUT', '/api/context/profile', { about_me: 'x' }],
+    ['POST', '/api/workspaces/touchline/posts', { platform: 'linkedin', content: 'hi' }],
+    ['PATCH', '/api/workspaces/touchline/posts/post_x', { content: 'hi' }],
+    ['DELETE', '/api/workspaces/touchline/posts/post_x'],
+    ['GET', '/api/workspaces/touchline/posts/post_x/image'],
+    ['POST', '/api/workspaces/touchline/posts/post_x/reject'],
+    ['POST', '/api/workspaces/touchline/posts/post_x/mark-posted'],
   ];
   for (const [method, path, body] of routes) {
     const res = await api(path, { method, body });

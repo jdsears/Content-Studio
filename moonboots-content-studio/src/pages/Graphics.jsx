@@ -3,7 +3,7 @@ import { useStudio } from '../studio.jsx';
 import { Button, Card, Field, PageHeader, Spinner, cx, inputClass } from '../components/ui.jsx';
 import { QUOTE_SIZES, quoteStylesFor, renderQuoteCard } from '../lib/images.js';
 
-const RATIO = { square: 'aspect-square', portrait: 'aspect-[4/5]', landscape: 'aspect-[16/9]' };
+const RATIO = { square: 'aspect-square', portrait: 'aspect-4/5', landscape: 'aspect-video' };
 
 const SIZE_HINTS = {
   square: 'Works everywhere',
@@ -89,8 +89,8 @@ export default function Graphics() {
                   >
                     <span className="block h-12 rounded-lg relative overflow-hidden" style={{ background: s.radial ? `radial-gradient(circle at 50% 46%, ${s.bg[0]}, ${s.bg[1]})` : `linear-gradient(135deg, ${s.bg[0]}, ${s.bg[1]})` }}>
                       <span className="absolute left-2 top-2 w-3 h-3 rounded-full" style={{ backgroundColor: s.mark }} />
-                      <span className="absolute left-2 right-4 bottom-4 h-1.5 rounded" style={{ backgroundColor: s.text, opacity: 0.85 }} />
-                      <span className="absolute left-2 w-8 bottom-2 h-1 rounded" style={{ backgroundColor: s.footer }} />
+                      <span className="absolute left-2 right-4 bottom-4 h-1.5 rounded-sm" style={{ backgroundColor: s.text, opacity: 0.85 }} />
+                      <span className="absolute left-2 w-8 bottom-2 h-1 rounded-sm" style={{ backgroundColor: s.footer }} />
                     </span>
                     <span className="block text-[11px] text-muted mt-1.5 px-0.5 truncate">{s.name}</span>
                   </button>
@@ -108,7 +108,7 @@ export default function Graphics() {
                   onClick={() => setSize(key)}
                   className={cx('rounded-xl border p-3 flex flex-col items-center gap-2 transition', size === key ? 'border-accent/70 ring-2 ring-accent/20 text-ink' : 'border-line/60 text-muted hover:text-ink')}
                 >
-                  <span className={cx('border-2 border-current rounded-sm', key === 'square' ? 'w-6 h-6' : key === 'portrait' ? 'w-5 h-6' : 'w-7 h-4')} />
+                  <span className={cx('border-2 border-current rounded-xs', key === 'square' ? 'w-6 h-6' : key === 'portrait' ? 'w-5 h-6' : 'w-7 h-4')} />
                   <span className="text-[11px] font-medium">{s.label}</span>
                 </button>
               ))}
