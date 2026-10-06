@@ -3,7 +3,7 @@ import { checkContent } from '../../shared/brand.js';
 import { Icon, PlatformIcon } from './icons.jsx';
 import { Badge, BrandWarnings, Button, Card, ImageViewer, Modal, StatusBadge, cx, inputClass } from './ui.jsx';
 import { formatWhen } from '../lib/schedule.js';
-import { PLATFORM_NAMES, PLATFORM_LIMITS } from '../lib/posts.js';
+import { PLATFORM_NAMES, PLATFORM_LIMITS, metricsLine } from '../lib/posts.js';
 import { useStudio } from '../studio.jsx';
 
 const SOURCE_TONES = { marcus: 'accent', api: 'blue', you: 'neutral' };
@@ -182,6 +182,12 @@ export const PostCard = ({ item, compact = false }) => {
         </p>
       )}
       {item.imageError && <p className="mt-2 text-xs text-faint">Image card could not be made: {item.imageError}</p>}
+      {item.metrics && (
+        <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
+          <Icon name="insights" className="w-3.5 h-3.5" />
+          {metricsLine(item.metrics)}
+        </p>
+      )}
       {item.postUrl && (
         <a href={item.postUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline">
           <Icon name="link" className="w-3.5 h-3.5" /> View the live post

@@ -37,6 +37,8 @@ export const toItem = (p) => {
     createdAt: p.createdAt || null,
     error: p.error || null,
     postUrl: p.postUrl || null,
+    // Likes, comments, shares and reach, once Publer has them
+    metrics: p.metrics?.updated_at ? p.metrics : null,
     autoSchedule: !!p.autoSchedule,
     manual: !!p.manual,
     imageError: p.imageError || null,
@@ -78,6 +80,21 @@ export const browserDraftToServer = (p) => {
     createdAt: p.createdAt || null,
     publishedAt: p.publishedAt || null,
   };
+};
+
+// Engagements for a post: Publer's own count, or likes, comments, shares and saves added up
+export const engagementsOf = (m) => (m ? (Number.isFinite(m.engagement) ? m.engagement : (m.likes || 0) + (m.comments || 0) + (m.shares || 0) + (m.saves || 0)) : 0);
+
+// "450 reach · 20 likes · 5 comments · 3 shares"
+export const metricsLine = (m) => {
+  if (!m) return '';
+  const n = v => Number(v || 0).toLocaleString('en-GB');
+  return [
+    Number.isFinite(m.reach) && `${n(m.reach)} reach`,
+    `${n(m.likes)} likes`,
+    `${n(m.comments)} comments`,
+    `${n(m.shares)} shares`,
+  ].filter(Boolean).join(' · ');
 };
 
 export const PLATFORM_NAMES = { linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Instagram', x: 'X' };

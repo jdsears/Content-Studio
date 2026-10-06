@@ -68,7 +68,9 @@ export function toApiPost(p) {
     publishedAt: p.published_at || null,
     scheduledFor: p.scheduled_for || null,
     image: p.image || p.image_ref ? `/api/posts/${p.id}/image` : null,
-    metrics: p.metrics || { likes: 0, comments: 0, shares: 0 },
+    metrics: { likes: 0, comments: 0, shares: 0, ...(p.metrics || {}) },
+    // The same numbers under the name Touchline HQ's sync reads
+    engagement: p.metrics || null,
     error: p.error || null,
     createdAt: p.created_at,
     platformPostId: p.publer_post_id || null,

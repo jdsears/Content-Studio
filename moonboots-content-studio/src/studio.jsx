@@ -182,6 +182,36 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
 
   const items = useMemo(() => toItems(posts), [posts]);
 
+  // ---------- Engagement from Publer's analytics ----------
+  const [engagement, setEngagement] = useState(null);
+  const loadEngagement = useCallback(async () => {
+    if (!activeId) return;
+    const id = activeId;
+    try {
+      const data = await apiJson(`/api/workspaces/${id}/engagement`);
+      if (shownWorkspace.current === id) setEngagement(data.status);
+    } catch {
+      if (shownWorkspace.current === id) setEngagement(null);
+    }
+  }, [activeId]);
+
+  const refreshEngagement = useCallback(async () => {
+    try {
+      const data = await apiJson(`/api/workspaces/${activeId}/engagement/refresh`, { method: 'POST' });
+      setEngagement(data.status);
+      await reloadServerPosts();
+      if (data.status?.ok) toast({ tone: 'success', title: 'Numbers updated from Publer' });
+      else toast({ tone: 'error', title: 'Could not get the numbers', body: data.status?.error });
+    } catch (error) {
+      toast({ tone: 'error', title: 'Could not get the numbers', body: error.message });
+    }
+  }, [activeId, reloadServerPosts, toast]);
+
+  useEffect(() => {
+    setEngagement(null);
+    if (page === 'insights') loadEngagement();
+  }, [page, loadEngagement]);
+
   const counts = useMemo(() => {
     const c = { approval: 0, upcoming: 0, published: 0, problems: 0, other: 0 };
     items.forEach(item => { c[item.group] += 1; });
@@ -267,6 +297,7 @@ export const StudioProvider = ({ page, param, navigate, children }) => {
     serverConfig, workspaces, workspace, switchWorkspace, updateWorkspace,
     settings, updateSettings,
     posts, serverState, reloadServerPosts, items, counts,
+    engagement, refreshEngagement,
     generator, setGenerator,
     addDraft, serverAction, editPost, deletePost, copyText,
   };

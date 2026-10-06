@@ -11,6 +11,7 @@ import { createStore } from './server/store.js';
 import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js';
 import * as publer from './server/publer.js';
 import { createPostService, toApiPost, PostError, PLATFORMS } from './server/posts.js';
+import { createEngagementService } from './server/engagement.js';
 import { checkContent, prepareForPublishing } from './shared/brand.js';
 import { makePostImage } from './server/cards.js';
 
@@ -33,6 +34,7 @@ const store = createStore(supabase);
 
 // Posts from Touchline HQ and the v1 API, and the scheduler that sends them to Publer
 const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage: makePostImage });
+const engagementService = createEngagementService({ store, posts: postService, getWorkspaceSecrets });
 
 // ============ CONTEXT HELPER FUNCTIONS ============
 
@@ -1500,6 +1502,32 @@ for (const [action, method] of Object.entries(POST_ACTIONS)) {
   });
 }
 
+// Likes, comments, shares and reach from Publer's analytics
+app.get('/api/workspaces/:id/engagement', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    res.json({ status: await engagementService.status(workspace) });
+  } catch (error) {
+    sendPostError(res, error, 'engagement');
+  }
+});
+
+app.post('/api/workspaces/:id/engagement/refresh', async (req, res) => {
+  try {
+    const workspace = await workspaceFromParams(req);
+    res.json({ status: await engagementService.refresh(workspace, { force: true }) });
+  } catch (error) {
+    sendPostError(res, error, 'engagement refresh');
+  }
+});
+
+// Each workspace's numbers are refreshed every few hours (Publer itself updates about once a day)
+async function refreshAllEngagement() {
+  for (const workspace of await getWorkspaces()) {
+    await engagementService.refresh(workspace).catch(error => console.error('[engagement]', error.message));
+  }
+}
+
 // Health check endpoint (public; Touchline HQ checks it)
 app.get('/api/health', async (req, res) => {
   res.json({
@@ -1518,4 +1546,6 @@ app.get('*', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   postService.startScheduler();
+  setTimeout(refreshAllEngagement, 60 * 1000).unref();
+  setInterval(refreshAllEngagement, 30 * 60 * 1000).unref();
 });
