@@ -165,6 +165,7 @@ export default function Settings() {
 
   if (!workspace) return null;
   const storage = serverConfig?.storage;
+  const inRailway = workspace.publer_key_source === 'railway';
 
   return (
     <>
@@ -181,37 +182,55 @@ export default function Settings() {
         {/* ---------- Publer ---------- */}
         <Section
           title="Publer"
-          description={`Publer posts for ${workspace.name} at the planned time. Each workspace has its own key. When a key expires, paste a new one here.`}
+          description={inRailway
+            ? `Publer posts for ${workspace.name} at the planned time. Its key is set in Railway, so it stays even if saved settings are lost.`
+            : `Publer posts for ${workspace.name} at the planned time. Each workspace has its own key. When a key expires, paste a new one here.`}
         >
-          <div className="flex items-center gap-3 p-3.5 rounded-xl bg-raised/30 border border-line/50">
-            <span className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center text-muted"><Icon name="key" className="w-4 h-4" /></span>
-            <span className="flex-1 min-w-0 text-sm text-ink">
-              {workspace.has_publer_key
-                ? <>Saved key ends in <code className="font-mono text-muted">…{workspace.publer_key_last4}</code></>
-                : 'No Publer key saved'}
-            </span>
-            {workspace.has_publer_key
-              ? <Button size="sm" variant="ghost" icon="trash" onClick={removeKey}>Remove</Button>
-              : <Badge tone="yellow">Not connected</Badge>}
-          </div>
+          {inRailway ? (
+            <StatusRow
+              icon="key"
+              label={<>Set in Railway as <code className="font-mono text-muted">{workspace.publer_key_env_name}</code></>}
+              detail={<>Ends in <code className="font-mono">…{workspace.publer_key_last4}</code>. To change it, update the variable in Railway.</>}
+              ok
+              okLabel="Active"
+            />
+          ) : (
+            <>
+              <div className="flex items-center gap-3 p-3.5 rounded-xl bg-raised/30 border border-line/50">
+                <span className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center text-muted"><Icon name="key" className="w-4 h-4" /></span>
+                <span className="flex-1 min-w-0 text-sm text-ink">
+                  {workspace.has_publer_key
+                    ? <>Saved key ends in <code className="font-mono text-muted">…{workspace.publer_key_last4}</code></>
+                    : 'No Publer key saved'}
+                </span>
+                {workspace.has_publer_key
+                  ? <Button size="sm" variant="ghost" icon="trash" onClick={removeKey}>Remove</Button>
+                  : <Badge tone="yellow">Not connected</Badge>}
+              </div>
 
-          <Field
-            label={workspace.has_publer_key ? 'Replace with a new key' : 'Publer API key'}
-            hint="The key is checked with Publer first and only saved if it works. Publer's API needs a Business or Enterprise plan."
-          >
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="password"
-                autoComplete="off"
-                value={newKey}
-                onChange={e => setNewKey(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') saveKey(); }}
-                placeholder="Paste your Publer API key"
-                className={cx(inputClass, 'flex-1')}
-              />
-              <Button variant="primary" loading={saving} disabled={!newKey.trim()} onClick={saveKey}>Save and test</Button>
-            </div>
-          </Field>
+              <Field
+                label={workspace.has_publer_key ? 'Replace with a new key' : 'Publer API key'}
+                hint="The key is checked with Publer first and only saved if it works. Publer's API needs a Business or Enterprise plan."
+              >
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={newKey}
+                    onChange={e => setNewKey(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveKey(); }}
+                    placeholder="Paste your Publer API key"
+                    className={cx(inputClass, 'flex-1')}
+                  />
+                  <Button variant="primary" loading={saving} disabled={!newKey.trim()} onClick={saveKey}>Save and test</Button>
+                </div>
+              </Field>
+              <p className="text-xs text-faint">
+                Safer: set <code className="font-mono text-muted">{workspace.publer_key_env_name}</code> in Railway.
+                A key there keeps working even if saved settings are ever lost.
+              </p>
+            </>
+          )}
 
           {workspace.has_publer_key && (
             <Button size="sm" icon="refresh" loading={testing} onClick={() => testConnection()}>Test connection</Button>

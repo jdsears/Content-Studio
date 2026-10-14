@@ -5,7 +5,7 @@ import { dirname, join } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import {
   requireAdmin, handleLogin, handleLogout, handleMe,
-  safeEqual, sha256, envKeyFor, envKeyName, bearerToken,
+  safeEqual, sha256, envKeyFor, envKeyName, publerEnvName, publerEnvKeyFor, bearerToken,
 } from './server/auth.js';
 import { createStore } from './server/store.js';
 import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js';
@@ -248,13 +248,24 @@ async function getWorkspaceById(id) {
 
 // Server-only workspace settings: Publer key, Publer account choices, generated API key hash.
 // Never sent to the browser in full.
+// The Publer key comes from the workspace's Railway variable (e.g. TOUCHLINE_PUBLER_API_KEY)
+// when set, so losing saved settings (a missing Volume) can't take publishing down. Otherwise
+// it is the key saved in Settings.
 async function getWorkspaceSecrets(workspaceId) {
+  let saved = {};
   try {
-    return (await store.get('workspace_settings', workspaceId)) || {};
+    saved = (await store.get('workspace_settings', workspaceId)) || {};
   } catch (error) {
     console.error(`Failed to read settings for workspace ${workspaceId}:`, error.message);
-    return {};
   }
+  const workspace = (await getWorkspaceById(workspaceId).catch(() => null)) || { id: workspaceId };
+  const envKey = publerEnvKeyFor(workspace);
+  const key = envKey || saved.publer_api_key || null;
+  return {
+    ...saved,
+    publer_api_key: key || undefined,
+    publer_key_source: envKey ? 'railway' : key ? 'settings' : null,
+  };
 }
 
 async function updateWorkspaceSecrets(workspaceId, updates) {
@@ -286,6 +297,8 @@ async function publicWorkspace(ws) {
     api_key_last4: envKey ? lastFour(envKey) : secrets.api_key_last4 || null,
     has_publer_key: !!secrets.publer_api_key,
     publer_key_last4: lastFour(secrets.publer_api_key),
+    publer_key_source: secrets.publer_key_source,
+    publer_key_env_name: publerEnvName(ws),
     platform_accounts: secrets.platform_accounts || {},
   };
 }
@@ -1069,6 +1082,14 @@ app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
   const { publerApiKey, platformAccounts } = req.body || {};
   const updates = {};
   let accounts;
+
+  // A key set in Railway wins, so saving or removing one here would do nothing
+  if (publerApiKey !== undefined && publerEnvKeyFor(workspace)) {
+    return res.status(409).json({
+      error: `${workspace.name}'s Publer key is set in Railway as ${publerEnvName(workspace)}. Change it there.`,
+      code: 'key_in_railway',
+    });
+  }
 
   if (typeof publerApiKey === 'string' && publerApiKey.trim()) {
     const key = publerApiKey.trim();
