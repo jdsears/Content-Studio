@@ -5,7 +5,8 @@ import { dirname, join } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import {
   requireAdmin, handleLogin, handleLogout, handleMe,
-  safeEqual, sha256, envKeyFor, envKeyName, publerEnvName, publerEnvKeyFor, bearerToken,
+  safeEqual, sha256, envKeyFor, envKeyName, publerEnvName, publerEnvKeyFor,
+  publerAccountsEnvName, publerEnvAccountsFor, bearerToken,
 } from './server/auth.js';
 import { createStore } from './server/store.js';
 import { askClaude, claudeApiKey, CLAUDE_KEY_MISSING } from './server/claude.js';
@@ -261,10 +262,14 @@ async function getWorkspaceSecrets(workspaceId) {
   const workspace = (await getWorkspaceById(workspaceId).catch(() => null)) || { id: workspaceId };
   const envKey = publerEnvKeyFor(workspace);
   const key = envKey || saved.publer_api_key || null;
+  // Account choices set in Railway (e.g. TOUCHLINE_PUBLER_ACCOUNTS) win, platform by platform
+  const envAccounts = publerEnvAccountsFor(workspace);
   return {
     ...saved,
     publer_api_key: key || undefined,
     publer_key_source: envKey ? 'railway' : key ? 'settings' : null,
+    platform_accounts: { ...(saved.platform_accounts || {}), ...envAccounts },
+    platform_accounts_in_railway: Object.keys(envAccounts),
   };
 }
 
@@ -300,6 +305,8 @@ async function publicWorkspace(ws) {
     publer_key_source: secrets.publer_key_source,
     publer_key_env_name: publerEnvName(ws),
     platform_accounts: secrets.platform_accounts || {},
+    platform_accounts_in_railway: secrets.platform_accounts_in_railway || [],
+    platform_accounts_env_name: publerAccountsEnvName(ws),
   };
 }
 
@@ -1100,11 +1107,11 @@ app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
     }
     updates.publer_api_key = key;
 
-    // Keep account choices that still exist under the new key
-    const secrets = await getWorkspaceSecrets(workspace.id);
+    // Keep saved account choices that still exist under the new key (choices set in Railway are not saved here)
+    const saved = (await store.get('workspace_settings', workspace.id)) || {};
     const available = new Set(accounts.map(a => a.id));
     updates.platform_accounts = Object.fromEntries(
-      Object.entries(secrets.platform_accounts || {}).filter(([, id]) => available.has(String(id))),
+      Object.entries(saved.platform_accounts || {}).filter(([, id]) => available.has(String(id))),
     );
   } else if (publerApiKey === null) {
     updates.publer_api_key = null;
@@ -1114,10 +1121,22 @@ app.put('/api/workspaces/:id/publer-settings', async (req, res) => {
     if (!platformAccounts || typeof platformAccounts !== 'object' || Array.isArray(platformAccounts)) {
       return res.status(400).json({ error: 'platformAccounts must be an object' });
     }
+    const inRailway = publerEnvAccountsFor(workspace);
     const clean = {};
     for (const platform of PLATFORMS) {
       const value = platformAccounts[platform];
-      if (value !== undefined && value !== null && value !== '') clean[platform] = String(value);
+      const chosen = value !== undefined && value !== null && value !== '' ? String(value) : null;
+      if (inRailway[platform]) {
+        // Set in Railway: it can't be changed here, and isn't saved here
+        if (chosen && chosen !== inRailway[platform]) {
+          return res.status(409).json({
+            error: `The ${platform} account for ${workspace.name} is set in Railway (${publerAccountsEnvName(workspace)}). Change it there.`,
+            code: 'account_in_railway',
+          });
+        }
+        continue;
+      }
+      if (chosen) clean[platform] = chosen;
     }
     updates.platform_accounts = clean;
   }

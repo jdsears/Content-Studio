@@ -149,6 +149,34 @@ export function publerEnvKeyFor(workspace) {
   return process.env[publerEnvName(workspace)]?.trim() || null;
 }
 
+// Railway variable holding which Publer account each platform posts to, e.g.
+// TOUCHLINE_PUBLER_ACCOUNTS="linkedin=123, facebook=456, instagram=789, x=1011"
+export function publerAccountsEnvName(workspace) {
+  return `${envPrefix(workspace)}_PUBLER_ACCOUNTS`;
+}
+
+const ACCOUNT_PLATFORMS = ['linkedin', 'facebook', 'instagram', 'x'];
+
+// { linkedin: '123', ... } from the variable. Unknown platforms are ignored (and logged once).
+const warnedAccountsVars = new Set();
+export function publerEnvAccountsFor(workspace) {
+  const name = publerAccountsEnvName(workspace);
+  const raw = process.env[name];
+  if (!raw || !raw.trim()) return {};
+  const accounts = {};
+  for (const part of raw.split(/[,;\n]+/)) {
+    const match = /^\s*([a-z]+)\s*[=:]\s*(\S+)\s*$/i.exec(part);
+    const platform = match?.[1].toLowerCase();
+    if (match && ACCOUNT_PLATFORMS.includes(platform)) {
+      accounts[platform] = match[2];
+    } else if (part.trim() && !warnedAccountsVars.has(name)) {
+      warnedAccountsVars.add(name);
+      console.warn(`${name}: could not read "${part.trim()}". Use platform=accountId, separated by commas, with platforms ${ACCOUNT_PLATFORMS.join(', ')}.`);
+    }
+  }
+  return accounts;
+}
+
 export function envKeyFor(workspace) {
   return process.env[envKeyName(workspace)] || null;
 }

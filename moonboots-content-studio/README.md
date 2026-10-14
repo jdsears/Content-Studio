@@ -37,13 +37,14 @@ Posts are written with Claude, published through Publer (LinkedIn, Facebook, Ins
 | `TOUCHLINE_API_KEY` | For Touchline HQ | The key Marcus sends as `Authorization: Bearer <key>`. |
 | `MOONBOOTS_API_KEY` | No | Only if something outside the app posts to MoonBoots. |
 | `TOUCHLINE_PUBLER_API_KEY`, `MOONBOOTS_PUBLER_API_KEY` | Recommended | Each workspace's Publer key. Used before any key saved in Settings, so publishing keeps working even if saved settings are lost. One per workspace, so a brand never posts with another brand's key. |
+| `TOUCHLINE_PUBLER_ACCOUNTS`, `MOONBOOTS_PUBLER_ACCOUNTS` | Recommended | Which Publer account each platform posts to, as `linkedin=ID, facebook=ID, instagram=ID, x=ID`. Used before choices saved in Settings, platform by platform. Settings has a **Copy for Railway** button that builds this value from your current choices. |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | No | Use Supabase for storage instead of a Volume. Run `supabase/content_studio_store.sql` first. |
 
 Storage: attach a Railway Volume (mount path `/data`). Railway tells the app where it is. Settings, keys, posts (drafts included) and images all live there. Without a Volume or Supabase, they are lost on every deploy; `/api/health` shows `"persistent": false` when that is the case. Drafts used to be kept in the browser; any still there are moved to the server the next time the app opens.
 
 Engagement numbers in Insights come from Publer's analytics. They need a Publer Business plan and an API key made with the **Analytics** permission ticked (a key's permissions can't be changed later, so make a new one if needed). Facebook Pages, Instagram business accounts and LinkedIn pages have numbers; LinkedIn profiles and X give little or none.
 
-Publer keys: set each workspace's key in Railway (above), or paste it in **Settings, Publer** with that workspace selected. A Railway variable wins; Settings then shows it as set in Railway, and changing it means changing the variable. A key pasted in Settings is checked with Publer before it is saved. Only the last 4 characters of a key are ever shown. Account choices (which Publer account each platform posts to) are still saved settings.
+Publer keys: set each workspace's key in Railway (above), or paste it in **Settings, Publer** with that workspace selected. A Railway variable wins; Settings then shows it as set in Railway, and changing it means changing the variable. A key pasted in Settings is checked with Publer before it is saved. Only the last 4 characters of a key are ever shown. Account choices (which Publer account each platform posts to) can be set in Railway the same way; without them, a platform with no saved choice posts to the first account Publer lists for it.
 
 ## Claude models
 
