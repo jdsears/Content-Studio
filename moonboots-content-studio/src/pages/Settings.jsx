@@ -166,6 +166,20 @@ export default function Settings() {
   if (!workspace) return null;
   const storage = serverConfig?.storage;
   const inRailway = workspace.publer_key_source === 'railway';
+  // Account choices saved here (not yet in Railway), as the Railway variable's value: "linkedin=123, facebook=456"
+  const savedOnly = Object.entries(workspace.platform_accounts || {})
+    .filter(([p]) => !(workspace.platform_accounts_in_railway || []).includes(p));
+  const railwayAccounts = savedOnly.length
+    ? Object.entries(workspace.platform_accounts || {}).map(([p, id]) => `${p}=${id}`).join(', ')
+    : null;
+  const copyForRailway = async () => {
+    try {
+      await navigator.clipboard.writeText(railwayAccounts);
+      toast({ tone: 'success', title: 'Copied', body: `Paste it into Railway as ${workspace.platform_accounts_env_name}.` });
+    } catch {
+      toast({ tone: 'error', title: 'Could not copy', body: railwayAccounts });
+    }
+  };
 
   return (
     <>
@@ -245,16 +259,22 @@ export default function Settings() {
         </Section>
 
         {/* ---------- Accounts ---------- */}
-        <Section title="Where posts go" description="Choose which Publer account each platform posts to.">
+        <Section
+          title="Where posts go"
+          description="Choose which Publer account each platform posts to. Choices set in Railway can't be lost and are shown as set in Railway."
+        >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {ACCOUNT_PLATFORMS.map(({ p, label, hint }) => {
               const matching = accounts.filter(acc => acc.platform === p);
               const selectedId = workspace.platform_accounts?.[p] || '';
               const selected = accounts.find(acc => String(acc.id) === selectedId);
-              const detail = selected ? `${selected.name} (${selected.kind})`
-                : selectedId ? 'Chosen. Test the connection to see its name.'
-                  : matching.length ? 'Choose an account'
-                    : accounts.length ? `No ${label} account in Publer` : hint;
+              const locked = (workspace.platform_accounts_in_railway || []).includes(p);
+              const chosen = selected ? `${selected.name} (${selected.kind})` : `Account ${selectedId}`;
+              const detail = locked ? `${chosen}, set in Railway`
+                : selected ? chosen
+                  : selectedId ? 'Chosen. Test the connection to see its name.'
+                    : matching.length ? 'Choose an account'
+                      : accounts.length ? `No ${label} account in Publer` : hint;
               return (
                 <div key={p} className="p-3.5 rounded-xl bg-raised/30 border border-line/50">
                   <div className="flex items-center gap-3">
@@ -265,7 +285,7 @@ export default function Settings() {
                     </span>
                     {selectedId && <Icon name="check" className="w-4 h-4 text-accent" />}
                   </div>
-                  {matching.length > 0 && (
+                  {matching.length > 0 && !locked && (
                     <select value={selectedId} onChange={e => chooseAccount(p, e.target.value)} className={cx(inputClass, 'mt-3 py-2')}>
                       <option value="">Choose an account</option>
                       {matching.map(acc => <option key={acc.id} value={String(acc.id)}>{acc.name} ({acc.kind})</option>)}
@@ -275,6 +295,15 @@ export default function Settings() {
               );
             })}
           </div>
+          {railwayAccounts && (
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-xl bg-raised/30 border border-line/50">
+              <p className="flex-1 text-xs text-muted leading-relaxed">
+                Safer: copy these choices and paste them into Railway as <code className="font-mono text-ink">{workspace.platform_accounts_env_name}</code>.
+                They then keep working even if saved settings are ever lost.
+              </p>
+              <Button size="sm" icon="copy" onClick={() => copyForRailway()}>Copy for Railway</Button>
+            </div>
+          )}
         </Section>
 
         {/* ---------- Preferences ---------- */}
