@@ -132,9 +132,21 @@ export function handleMe(req, res) {
 
 // ============ WORKSPACE API KEYS (Bearer, for Touchline HQ / Marcus) ============
 
+const envPrefix = workspace => String(workspace.slug || workspace.id).toUpperCase().replace(/[^A-Z0-9]/g, '_');
+
 // Railway variable holding a workspace's key, e.g. TOUCHLINE_API_KEY
 export function envKeyName(workspace) {
-  return `${String(workspace.slug || workspace.id).toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`;
+  return `${envPrefix(workspace)}_API_KEY`;
+}
+
+// Railway variable holding a workspace's Publer key, e.g. TOUCHLINE_PUBLER_API_KEY.
+// One per workspace: each brand has its own Publer key, so a shared one could post to the wrong brand.
+export function publerEnvName(workspace) {
+  return `${envPrefix(workspace)}_PUBLER_API_KEY`;
+}
+
+export function publerEnvKeyFor(workspace) {
+  return process.env[publerEnvName(workspace)]?.trim() || null;
 }
 
 export function envKeyFor(workspace) {
