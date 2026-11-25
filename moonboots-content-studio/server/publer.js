@@ -49,7 +49,7 @@ function explain(status, data, isHtml) {
   return new PublerError(detail || `Publer error (status ${status})`, { status: 400, code: 'publer_error' });
 }
 
-async function request(apiKey, path, { method = 'GET', workspaceId, body, query, multipart } = {}) {
+async function request(apiKey, path, { method = 'GET', workspaceId, body, query, multipart, timeoutMs = TIMEOUT_MS } = {}) {
   const url = new URL(PUBLER_API + path);
   for (const [key, value] of Object.entries(query || {})) {
     if (value === undefined || value === null) continue;
@@ -68,7 +68,7 @@ async function request(apiKey, path, { method = 'GET', workspaceId, body, query,
       method,
       headers,
       body: multipart ? multipart.body : body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     // A timeout means Publer may have received the request; a connection failure means it did not
@@ -168,49 +168,86 @@ export async function resolveAccountId(apiKey, publerWorkspaceId, platform, chos
 
 // ============ MEDIA ============
 
-// Upload an image (data URL or web address) and return Publer's media id, or null if it fails
+// Upload a file to Publer's media library (a direct upload, answered straight
+// away) and return its media id
+async function uploadFile(apiKey, publerWorkspaceId, { buffer, mimeType, filename, timeoutMs }) {
+  const boundary = '----ContentStudio' + Math.random().toString(36).slice(2);
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  const data = await request(apiKey, '/media', {
+    method: 'POST',
+    workspaceId: publerWorkspaceId,
+    multipart: { contentType: `multipart/form-data; boundary=${boundary}`, body },
+    timeoutMs,
+  });
+  return data?.id || null;
+}
+
+const IMAGE_TYPES = /^image\/(png|jpe?g|webp|gif)$/i;
+
+// An image at a web address, fetched here. Publer's own "from URL" upload is a
+// background job that needs polling, and the old call to it sent the wrong
+// body, so posts with an image link went out without the image (Nov 2026).
+async function fetchImage(url) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:') throw new Error('image links must be https');
+  const response = await fetch(parsed, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`the image link answered ${response.status}`);
+  const mimeType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (!IMAGE_TYPES.test(mimeType)) throw new Error(`the image link is not a PNG, JPEG, WebP or GIF (${mimeType || 'no type'})`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > 10 * 1024 * 1024) throw new Error('the image is over 10 MB');
+  return { buffer, mimeType };
+}
+
+// Upload an image (data URL or https web address) and return Publer's media id, or null if it fails
 export async function uploadMedia(apiKey, publerWorkspaceId, image) {
   if (!image) return null;
   try {
+    let file;
     if (image.startsWith('data:')) {
       const mimeType = image.split(';')[0].split(':')[1] || 'image/png';
-      const extension = mimeType.split('/')[1] || 'png';
-      const buffer = Buffer.from(image.split(',')[1], 'base64');
-      const boundary = '----ContentStudio' + Math.random().toString(36).slice(2);
-      const body = Buffer.concat([
-        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="image_${Date.now()}.${extension}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
-        buffer,
-        Buffer.from(`\r\n--${boundary}--\r\n`),
-      ]);
-      const data = await request(apiKey, '/media', {
-        method: 'POST',
-        workspaceId: publerWorkspaceId,
-        multipart: { contentType: `multipart/form-data; boundary=${boundary}`, body },
-      });
-      return data?.id || null;
+      file = { buffer: Buffer.from(image.split(',')[1], 'base64'), mimeType };
+    } else {
+      file = await fetchImage(image);
     }
-    const data = await request(apiKey, '/media/from-url', {
-      method: 'POST',
-      workspaceId: publerWorkspaceId,
-      body: { url: image },
-    });
-    return data?.id || null;
+    const extension = (file.mimeType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    return await uploadFile(apiKey, publerWorkspaceId, { ...file, filename: `image_${Date.now()}.${extension}` });
   } catch (error) {
     console.error('Publer media upload failed, posting without image:', error.message);
     return null;
   }
 }
 
+// Upload an MP4 and return Publer's media id. Unlike images this throws: a
+// video post must never go out as text alone. The error is one the scheduler
+// retries, as Publer has no post yet.
+export async function uploadVideo(apiKey, publerWorkspaceId, buffer) {
+  try {
+    const id = await uploadFile(apiKey, publerWorkspaceId, {
+      buffer, mimeType: 'video/mp4', filename: `video_${Date.now()}.mp4`, timeoutMs: 120000,
+    });
+    if (!id) throw new Error('Publer gave no media id');
+    return id;
+  } catch (error) {
+    throw new PublerError(`The video could not be uploaded to Publer: ${error.message}`, { status: 502, code: 'media_upload' });
+  }
+}
+
 // ============ POSTS ============
 
 // Schedule one post on one account. Publer needs a time in the future.
-export async function schedulePost(apiKey, publerWorkspaceId, { accountId, platform, text, mediaId, scheduledAt }) {
+export async function schedulePost(apiKey, publerWorkspaceId, { accountId, platform, text, mediaId, mediaType = 'photo', scheduledAt }) {
   const network = PLATFORM_TO_NETWORK[platform] || platform;
   const earliest = Date.now() + 60 * 1000;
   const when = new Date(Math.max(new Date(scheduledAt || 0).getTime() || 0, earliest)).toISOString();
 
-  const networkContent = { type: mediaId ? 'photo' : 'status', text };
-  if (mediaId) networkContent.media = [{ id: mediaId, type: 'photo' }];
+  const kind = mediaType === 'video' ? 'video' : 'photo';
+  const networkContent = { type: mediaId ? kind : 'status', text };
+  if (mediaId) networkContent.media = [{ id: mediaId, type: kind }];
 
   const data = await request(apiKey, '/posts/schedule', {
     method: 'POST',

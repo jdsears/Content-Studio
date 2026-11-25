@@ -68,6 +68,7 @@ export function toApiPost(p) {
     publishedAt: p.published_at || null,
     scheduledFor: p.scheduled_for || null,
     image: p.image || p.image_ref ? `/api/posts/${p.id}/image` : null,
+    video: p.video_id ? `/api/videos/${p.video_id}.mp4` : null,
     metrics: { likes: 0, comments: 0, shares: 0, ...(p.metrics || {}) },
     // The same numbers under the name Touchline HQ's sync reads
     engagement: p.metrics || null,
@@ -78,7 +79,7 @@ export function toApiPost(p) {
   };
 }
 
-export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage, images = createImageStore(store) }) {
+export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage, makeVideo, videos = null, images = createImageStore(store) }) {
   async function get(id) {
     return store.get(COLLECTION, id);
   }
@@ -286,14 +287,21 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     const attempt = { attempts: (post.attempts || 0) + 1, last_attempt_at: nowIso() };
 
     // Get everything ready. Nothing has reached Publer yet, so failures here can be retried.
-    let ctx, accountId, mediaId, text;
+    let ctx, accountId, mediaId, mediaType = 'photo', text;
     try {
       const workspace = await getWorkspaceById(post.workspace_id);
       if (!workspace) throw new PostError('Workspace not found', 404);
       if (typeof post.content !== 'string' || !post.content.trim()) throw new PostError('This post has no text.');
       ctx = await publerContext(workspace);
       accountId = await publer.resolveAccountId(ctx.apiKey, ctx.publerWorkspaceId, post.platform, ctx.platformAccounts[post.platform]);
-      mediaId = await publer.uploadMedia(ctx.apiKey, ctx.publerWorkspaceId, await imageFor(post));
+      if (post.video_id) {
+        const clip = videos ? await videos.read(post.video_id) : null;
+        if (!clip) throw new PostError('The video for this post is missing.');
+        mediaId = await publer.uploadVideo(ctx.apiKey, ctx.publerWorkspaceId, clip);
+        mediaType = 'video';
+      } else {
+        mediaId = await publer.uploadMedia(ctx.apiKey, ctx.publerWorkspaceId, await imageFor(post));
+      }
       text = prepareForPublishing(workspace, post);
     } catch (error) {
       return recordFailure(post, attempt, error);
@@ -306,7 +314,7 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
     let sent;
     try {
       sent = await publer.schedulePost(ctx.apiKey, ctx.publerWorkspaceId, {
-        accountId, platform: post.platform, text, mediaId, scheduledAt: post.scheduled_for,
+        accountId, platform: post.platform, text, mediaId, mediaType, scheduledAt: post.scheduled_for,
       });
     } catch (error) {
       return recordFailure(post, attempt, error);
@@ -409,13 +417,22 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
 
   // A post from Touchline HQ: already approved there, so it schedules itself
   async function createScheduledPost(workspace, input) {
-    const { platform, content, pillar, generateImage = false, imageStyle, scheduleFor, source } = input || {};
+    const { platform, content, pillar, generateImage = false, imageStyle, imageUrl, videoId, video, scheduleFor, source } = input || {};
 
     if (!PLATFORMS.includes(platform)) {
       throw new PostError(`platform must be one of: ${PLATFORMS.join(', ')}`);
     }
     if (typeof content !== 'string' || !content.trim()) {
       throw new PostError('content is required');
+    }
+    let imageLink = null;
+    if (imageUrl) {
+      try {
+        imageLink = new URL(String(imageUrl));
+      } catch {
+        throw new PostError('imageUrl must be a web address');
+      }
+      if (imageLink.protocol !== 'https:') throw new PostError('imageUrl must start with https://');
     }
 
     // The same post sent again within a few minutes (e.g. a retried request) is not posted twice
@@ -428,6 +445,21 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       && !['cancelled', 'failed'].includes(p.status)
       && Date.now() - new Date(p.created_at).getTime() < DEDUPE_MS);
     if (duplicate) return duplicate;
+
+    // A video: one already rendered (the preview John approved), or rendered
+    // now from its spec if that preview has gone (e.g. a redeploy without a volume)
+    let videoRef = null;
+    if (videoId || video) {
+      if (!videos) throw new PostError('Videos are not set up on this server', 503);
+      const known = videoId ? await videos.meta(String(videoId)) : null;
+      if (known && known.workspace_id === workspace.id && await videos.read(known.id)) {
+        videoRef = known.id;
+      } else if (video && typeof video === 'object' && makeVideo) {
+        videoRef = (await makeVideo(workspace, { platform, ...video })).id;
+      } else {
+        throw new PostError('That video was not found. Send its spec (video) so it can be rendered again.', 404);
+      }
+    }
 
     let scheduledFor;
     if (scheduleFor) {
@@ -446,8 +478,9 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       platform,
       content,
       pillar: pillar || null,
-      image: null,
+      image: videoRef ? null : imageLink?.toString() || null,
       image_style: imageStyle || null,
+      video_id: videoRef,
       source: source || 'api',
       auto_schedule: true,
       status: 'queued',
@@ -456,7 +489,8 @@ export function createPostService({ store, getWorkspaceById, getWorkspaceSecrets
       created_at: nowIso(),
     };
 
-    if (generateImage && makeImage) {
+    // A card only when the post has no video and no image of its own
+    if (generateImage && makeImage && !post.video_id && !post.image) {
       try {
         post = { ...post, ...(await prepareImage(post.id, await makeImage(workspace, post))) };
       } catch (error) {

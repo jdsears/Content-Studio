@@ -14,6 +14,8 @@ import { createPostService, toApiPost, PostError, PLATFORMS } from './server/pos
 import { createEngagementService } from './server/engagement.js';
 import { checkContent, prepareForPublishing } from './shared/brand.js';
 import { makePostImage } from './server/cards.js';
+import { renderClip, ffmpegAvailable } from './server/video.js';
+import { createVideoStore, sendVideo, VIDEO_ID } from './server/videos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -33,7 +35,26 @@ const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
 const store = createStore(supabase);
 
 // Posts from Touchline HQ and the v1 API, and the scheduler that sends them to Publer
-const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage: makePostImage });
+// Short branded videos. One render at a time: each takes about 15 seconds of CPU.
+const videos = createVideoStore(store);
+let renderChain = Promise.resolve();
+function makeVideo(workspace, spec) {
+  if (workspace.slug !== 'touchline') {
+    return Promise.reject(Object.assign(new Error('Videos are only set up for Touchline so far'), { status: 400 }));
+  }
+  const run = renderChain.then(() => renderClip(spec));
+  renderChain = run.catch(() => {});
+  return run.then(clip => videos.put(workspace.id, clip.buffer, {
+    platform: spec.platform, lines: spec.lines, screen_url: spec.screenUrl, cta: spec.cta || null, duration_sec: clip.durationSec,
+  }));
+}
+let ffmpegReady = null;
+ffmpegAvailable().then(ready => {
+  ffmpegReady = ready;
+  if (!ready) console.warn('[videos] ffmpeg is not installed, so videos cannot be rendered');
+});
+
+const postService = createPostService({ store, getWorkspaceById, getWorkspaceSecrets, makeImage: makePostImage, makeVideo, videos });
 const engagementService = createEngagementService({ store, posts: postService, getWorkspaceSecrets });
 
 // ============ CONTEXT HELPER FUNCTIONS ============
@@ -380,12 +401,16 @@ app.use(express.static(join(__dirname, 'dist')));
 const PUBLIC_API_PATHS = new Set(['/health', '/auth/login', '/auth/logout', '/auth/me']);
 
 function isWorkspaceKeyPath(path) {
-  return path === '/posts' || path.startsWith('/posts/') || path.startsWith('/v1/');
+  return path === '/posts' || path.startsWith('/posts/') || path.startsWith('/v1/') || path === '/videos';
 }
+
+// A rendered video, by its long random id, so a browser or Publer can play it
+const PUBLIC_VIDEO = /^\/videos\/vid_[a-f0-9]{24}\.mp4$/;
 
 app.use('/api', (req, res, next) => {
   const path = req.path.toLowerCase();
   if (PUBLIC_API_PATHS.has(path)) return next();
+  if ((req.method === 'GET' || req.method === 'HEAD') && PUBLIC_VIDEO.test(req.path)) return next();
   if (isWorkspaceKeyPath(path)) return authenticateApiKey(req, res, next);
   return requireAdmin(req, res, next);
 });
@@ -1431,6 +1456,52 @@ app.get('/api/posts/:id/image', async (req, res) => {
   }
 });
 
+// ============ VIDEOS (POST /api/videos with the workspace key; GET is public by id) ============
+// Touchline HQ renders a preview when Marcus drafts a video post, shows it to
+// John in Approvals, then sends the post with videoId (and the spec, in case
+// the preview has gone).
+
+const publicBase = req => (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+
+app.post('/api/videos', async (req, res) => {
+  try {
+    const { platform = 'facebook', lines, screenUrl, cta } = req.body || {};
+    const saved = await makeVideo(req.workspace, { platform, lines, screenUrl, cta });
+    res.json({
+      id: saved.id,
+      url: `${publicBase(req)}/api/videos/${saved.id}.mp4`,
+      durationSec: saved.duration_sec,
+      bytes: saved.bytes,
+    });
+  } catch (error) {
+    if (!error.status || error.status >= 500) console.error('[videos] Render failed:', error.message);
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.get('/api/videos/:file', async (req, res) => {
+  const id = String(req.params.file || '').replace(/\.mp4$/, '');
+  if (!VIDEO_ID.test(id)) return res.status(404).json({ error: 'Video not found' });
+  try {
+    const buffer = await videos.read(id);
+    if (!buffer) return res.status(404).json({ error: 'Video not found' });
+    sendVideo(req, res, buffer);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Previews that never became posts are deleted after a month
+async function pruneVideos() {
+  try {
+    const keep = new Set((await postService.list()).map(p => p.video_id).filter(Boolean));
+    const removed = await videos.prune({ keep });
+    if (removed) console.log(`[videos] Deleted ${removed} unused preview(s)`);
+  } catch (error) {
+    console.error('[videos] Prune failed:', error.message);
+  }
+}
+
 // ============ SERVER POSTS IN THE QUEUE (UI, admin login) ============
 
 async function workspaceFromParams(req) {
@@ -1556,6 +1627,7 @@ app.get('/api/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     supabase: !!supabase,
     storage: await storageStatus(),
+    video: ffmpegReady,
   });
 });
 
@@ -1569,4 +1641,6 @@ app.listen(PORT, '0.0.0.0', () => {
   postService.startScheduler();
   setTimeout(refreshAllEngagement, 60 * 1000).unref();
   setInterval(refreshAllEngagement, 30 * 60 * 1000).unref();
+  setTimeout(pruneVideos, 5 * 60 * 1000).unref();
+  setInterval(pruneVideos, 24 * 60 * 60 * 1000).unref();
 });

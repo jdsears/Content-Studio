@@ -14,6 +14,7 @@ export async function startFakePubler() {
     scheduleCalls: [],
     deleted: [],
     media: 0,
+    uploads: [],      // the file type of each media upload
     // Switches for tests
     scheduleDelayMs: 0,
     scheduleStatus: null,   // e.g. 503: /posts/schedule answers with this error
@@ -40,6 +41,7 @@ export async function startFakePubler() {
       if (req.method === 'GET' && path === '/accounts') return send(200, state.accounts);
       if (req.method === 'POST' && path === '/media') {
         state.media += 1;
+        state.uploads.push((/Content-Type: ([^\r\n]+)/.exec(raw) || [])[1] || null);
         return send(200, { id: `media_${state.media}` });
       }
       if (req.method === 'POST' && path === '/posts/schedule') {
