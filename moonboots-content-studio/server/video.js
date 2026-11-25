@@ -85,9 +85,11 @@ async function fetchScreen(url) {
 }
 
 // The screen in a device frame, as a PNG with transparency
-async function framedScreen(buffer, width) {
+export async function framedScreen(buffer, width) {
   const meta = await sharp(buffer).metadata();
-  const portrait = (meta.height || 1) > (meta.width || 1);
+  // Phone screenshots are about twice as tall as wide; a tall desktop page
+  // (the club dashboard, 1600x1851) still goes in a browser frame
+  const portrait = (meta.height || 1) > (meta.width || 1) * 1.4;
   const { navy } = TOUCHLINE_COLOURS;
   if (portrait) {
     // Phone: dark bezel, rounded screen, a notch
@@ -111,8 +113,13 @@ async function framedScreen(buffer, width) {
   // Wide screen: a browser-style card
   const cardWidth = Math.round(width * 0.86);
   const bar = Math.round(cardWidth * 0.045);
-  const screen = await sharp(buffer).resize({ width: cardWidth }).png().toBuffer();
-  const screenHeight = (await sharp(screen).metadata()).height;
+  // The top of the page only, so the frame sits below the text
+  const resized = await sharp(buffer).resize({ width: cardWidth }).png().toBuffer();
+  const fullHeight = (await sharp(resized).metadata()).height;
+  const screenHeight = Math.min(fullHeight, Math.round(cardWidth * 0.62));
+  const screen = screenHeight < fullHeight
+    ? await sharp(resized).extract({ left: 0, top: 0, width: cardWidth, height: screenHeight }).png().toBuffer()
+    : resized;
   const cardHeight = screenHeight + bar;
   const radius = Math.round(cardWidth * 0.025);
   const frame = Buffer.from(`<svg width="${cardWidth}" height="${cardHeight}">`

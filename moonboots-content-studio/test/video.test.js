@@ -8,7 +8,7 @@ import http from 'node:http';
 import express from 'express';
 import sharp from 'sharp';
 import { startFakePubler } from './helpers/fake-publer.js';
-import { validateSpec, timeline, renderClip, ffmpegAvailable } from '../server/video.js';
+import { validateSpec, timeline, renderClip, ffmpegAvailable, framedScreen } from '../server/video.js';
 import { createVideoStore, sendVideo, VIDEO_ID } from '../server/videos.js';
 
 const SCREEN = 'https://touchline.xyz/guide/coach-match-live.webp';
@@ -175,4 +175,15 @@ test('imageUrl is kept on the post (https only) instead of a generated card', as
     service.createScheduledPost(workspace, { platform: 'linkedin', content: 'Plain http image', imageUrl: 'http://touchline.xyz/a.png' }),
     /https/,
   );
+});
+
+test('phone screenshots go in a phone; wide and tall desktop pages in a browser frame below the text', async () => {
+  const image = (width, height) => sharp({ create: { width, height, channels: 3, background: '#223344' } }).png().toBuffer();
+  const phone = await framedScreen(await image(780, 1688), 1080);
+  assert.equal(phone.portrait, true);
+  const wide = await framedScreen(await image(1600, 1000), 1080);
+  assert.equal(wide.portrait, false);
+  const tall = await framedScreen(await image(1600, 1851), 1080);
+  assert.equal(tall.portrait, false, 'the club dashboard is a desktop page');
+  assert.ok(tall.height <= Math.round(929 * 0.62) + 42, `cropped to the top of the page (${tall.height}px)`);
 });
