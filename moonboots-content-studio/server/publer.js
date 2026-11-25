@@ -152,14 +152,35 @@ export async function listAccounts(apiKey) {
   };
 }
 
-// The account chosen in Settings for this platform, or the first one that matches
+// Brand accounts (pages, business accounts) come before personal ones
+const BRAND_TYPES = new Set(['in_page', 'fb_page', 'ig_business', 'ig_creator']);
+const PERSONAL_TYPES = new Set(['in_profile', 'ig_personal']);
+
+/**
+ * Pure: the account to post to when none is chosen in Settings. A brand page
+ * first; never someone's personal LinkedIn profile or Instagram, which must
+ * be chosen on purpose. Settings are lost when the store has no volume, and
+ * the first LinkedIn account Publer lists can be the owner's profile.
+ */
+export function defaultAccount(accounts, platform) {
+  const matches = accounts.filter(a => a.platform === platform);
+  return matches.find(a => BRAND_TYPES.has(a.type))
+    || matches.find(a => !PERSONAL_TYPES.has(a.type))
+    || null;
+}
+
+// The account chosen in Settings for this platform, or the brand account that matches
 export async function resolveAccountId(apiKey, publerWorkspaceId, platform, chosenAccountId) {
   if (chosenAccountId) return String(chosenAccountId);
-  const accounts = await request(apiKey, '/accounts', { workspaceId: publerWorkspaceId });
-  const match = (Array.isArray(accounts) ? accounts : []).map(normaliseAccount).find(a => a.platform === platform);
+  const raw = await request(apiKey, '/accounts', { workspaceId: publerWorkspaceId });
+  const accounts = (Array.isArray(raw) ? raw : []).map(normaliseAccount);
+  const match = defaultAccount(accounts, platform);
   if (!match) {
+    const personal = accounts.find(a => a.platform === platform);
     throw new PublerError(
-      `No ${platform} account is connected in Publer. Connect it in Publer, then choose it in Content Studio Settings.`,
+      personal
+        ? `The only ${platform} account in Publer is a personal one (${personal.name}). Choose it in Content Studio Settings if posts should go there, or connect the brand's page in Publer.`
+        : `No ${platform} account is connected in Publer. Connect it in Publer, then choose it in Content Studio Settings.`,
       { status: 400, code: 'no_account' },
     );
   }

@@ -187,3 +187,14 @@ test('phone screenshots go in a phone; wide and tall desktop pages in a browser 
   assert.equal(tall.portrait, false, 'the club dashboard is a desktop page');
   assert.ok(tall.height <= Math.round(929 * 0.62) + 42, `cropped to the top of the page (${tall.height}px)`);
 });
+
+test('with no account chosen, posts go to the brand page and never default to a personal profile', async () => {
+  const { defaultAccount } = await import('../server/publer.js');
+  const profile = { id: 'p1', platform: 'linkedin', type: 'in_profile', name: 'John' };
+  const page = { id: 'pg1', platform: 'linkedin', type: 'in_page', name: 'Touchline' };
+  assert.equal(defaultAccount([profile, page], 'linkedin').id, 'pg1', 'the page, even when Publer lists the profile first');
+  assert.equal(defaultAccount([profile], 'linkedin'), null, 'a personal profile must be chosen on purpose');
+  assert.equal(defaultAccount([{ id: 'f1', platform: 'facebook', type: 'fb_page' }], 'facebook').id, 'f1');
+  assert.equal(defaultAccount([{ id: 'x1', platform: 'x', type: 'twitter' }], 'x').id, 'x1');
+  assert.equal(defaultAccount([], 'facebook'), null);
+});
