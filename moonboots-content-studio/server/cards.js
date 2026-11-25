@@ -11,7 +11,7 @@ import { askClaude, claudeApiKey } from './claude.js';
 const require = createRequire(import.meta.url);
 const fonts = {};
 
-function interFont(weight) {
+export function interFont(weight) {
   if (!fonts[weight]) {
     const buffer = readFileSync(require.resolve(`@fontsource/inter/files/inter-latin-${weight}-normal.woff`));
     fonts[weight] = opentype.parse(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
@@ -27,11 +27,11 @@ export const CARD_SIZES = {
 };
 
 // Drop characters the font can't draw (emoji and the like)
-function drawable(font, text) {
+export function drawable(font, text) {
   return [...String(text)].filter(ch => /\s/.test(ch) || font.charToGlyphIndex(ch) > 0).join('').replace(/\s+/g, ' ').trim();
 }
 
-function wrapLines(font, text, size, maxWidth) {
+export function wrapLines(font, text, size, maxWidth) {
   const lines = [];
   let line = '';
   for (const word of text.split(' ')) {
@@ -47,7 +47,7 @@ function wrapLines(font, text, size, maxWidth) {
   return lines;
 }
 
-const textPath = (font, text, x, y, size, fill) =>
+export const textPath = (font, text, x, y, size, fill) =>
   `<path d="${font.getPath(text, x, y, size).toPathData(2)}" fill="${fill}"/>`;
 
 export function touchlineCardSvg({ headline, platform, markColour = TOUCHLINE_COLOURS.white }) {

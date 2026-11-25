@@ -1,0 +1,3 @@
+# ffmpeg joins the rendered frames into the short Touchline videos
+[phases.setup]
+nixPkgs = ["...", "ffmpeg"]
